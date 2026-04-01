@@ -146,11 +146,11 @@ $user_name = $_SESSION['user_name'] ?? '';
         <img src="assets/pharm.jpg" alt="Pharmacy Services">
         <div class="service-overlay">
             <!-- Use this path with ln/ -->
-            <a href="/ln/abc-medicos/index.html" target="_blank" class="service-btn">Learn More</a>
+            <a href="/Docker-Webs-main/Phamarcy.html" class="service-btn">Learn More</a>
         </div>
     </div>
     <div class="service-info">
-        <h4><a href="/ln/abc-medicos/index.html" target="_blank">Pharmacy Services</a></h4>
+        <h4><a href="/Docker-Webs-main/Phamarcy.html" >Pharmacy Services</a></h4>
         <p>Professional medication management, prescription delivery, health consultations, and wellness advice from qualified pharmacists.</p>
         <div class="service-tags">
             <span class="tag">Prescriptions</span>

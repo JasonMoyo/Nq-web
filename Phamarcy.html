@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interior Décor - NqobileQ</title>
+    <title>Pharmacy Services - ABC Medicos | NqobileQ</title>
     <link rel="stylesheet" href="styles.css">
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <style>
@@ -42,8 +42,8 @@
             margin: 4rem 0;
             flex-wrap: wrap;
         }
-        /* Button styles - consistent with landscaping.html */
-        .btn-wa, .btn-call, .btn-book {
+        /* Custom button styles that don't conflict with script.js */
+        .contact-btn {
             display: inline-flex;
             align-items: center;
             gap: 1rem;
@@ -101,39 +101,39 @@
 
     <section class="service-detail">
         <div class="service-header">
-            <h1>Interior <span>Décor</span></h1>
-            <p style="font-size: 2rem; max-width: 800px; margin: 2rem auto;">Transform your living spaces with professional interior design</p>
+            <h1>Pharmacy <span>Services</span></h1>
+            <p style="font-size: 2rem; max-width: 800px; margin: 2rem auto;">Professional medication management, prescription delivery, and health consultations from qualified pharmacists.</p>
         </div>
 
         <div class="service-features">
             <div class="feature-card">
-                <i class='bx bxs-paint'></i>
-                <h3>Space Planning</h3>
-                <p>Optimal layout design for maximum functionality and flow</p>
+                <i class='bx bxs-prescription'></i>
+                <h3>Prescription Management</h3>
+                <p>Upload your prescription online and get medications delivered to your doorstep</p>
             </div>
             <div class="feature-card">
-                <i class='bx bxs-color'></i>
-                <h3>Color Consultation</h3>
-                <p>Expert color selection to create the perfect ambiance</p>
+                <i class='bx bxs-truck'></i>
+                <h3>Free Delivery</h3>
+                <p>Fast and free delivery within 2 hours for all prescriptions</p>
             </div>
             <div class="feature-card">
-                <i class='bx bxs-couch'></i>
-                <h3>Furniture Selection</h3>
-                <p>Curated furniture choices that match your style and needs</p>
+                <i class='bx bxs-chat'></i>
+                <h3>Health Consultation</h3>
+                <p>Speak with qualified pharmacists for medication guidance and health advice</p>
             </div>
         </div>
 
         <div class="contact-buttons">
             <!-- WhatsApp button - direct link, no modal -->
-            <a href="https://wa.me/+27782280408" target="_blank" class="btn-wa">
-                <i class='bx bxl-whatsapp'></i> Inquire via WhatsApp
+            <a href="https://wa.me/+27782280408?text=Hi%2C%20I%20need%20pharmacy%20assistance" target="_blank" class="contact-btn btn-wa">
+                <i class='bx bxl-whatsapp'></i> Pharmacy WhatsApp
             </a>
             <!-- Call button - direct tel link, no modal -->
-            <a href="tel:+27782280408" class="btn-call">
-                <i class='bx bxs-phone-call'></i> Call for Quote
+            <a href="tel:+27782280408" class="contact-btn btn-call">
+                <i class='bx bxs-phone-call'></i> Call Pharmacy
             </a>
             <!-- Book button - opens modal -->
-            <a href="#" class="btn-book" onclick="document.getElementById('joinUsModal').style.display='block'; return false;">
+            <a href="#" class="contact-btn btn-book" onclick="document.getElementById('joinUsModal').style.display='block'; return false;">
                 <i class='bx bxs-calendar'></i> Book Consultation
             </a>
         </div>
@@ -142,17 +142,17 @@
     <div id="joinUsModal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="document.getElementById('joinUsModal').style.display='none'">&times;</span>
-            <h2>Book a Consultation</h2>
+            <h2>Book a Pharmacy Consultation</h2>
             <form action="submit_booking.php" method="POST">
-                <input type="hidden" name="service_type" value="interior">
+                <input type="hidden" name="service_type" value="pharmacy">
                 <label for="name">Full Name:</label>
                 <input type="text" id="name" name="name" required>
                 <label for="email">Email:</label>
                 <input type="email" id="email" name="email" required>
                 <label for="phone">Phone Number:</label>
                 <input type="tel" id="phone" name="phone" required>
-                <label for="message">Design Preferences:</label>
-                <textarea id="message" name="message" rows="4" placeholder="Describe your ideal space..."></textarea>
+                <label for="message">Medication Details / Questions:</label>
+                <textarea id="message" name="message" rows="4" placeholder="Please list any medications you need or any health questions..."></textarea>
                 <button type="submit" class="submit-btn">Submit Inquiry</button>
             </form>
         </div>
@@ -175,14 +175,6 @@
         if (dateInput) {
             const today = new Date().toISOString().split('T')[0];
             dateInput.setAttribute('min', today);
-        }
-        
-        // Close modal when clicking outside
-        window.onclick = function(event) {
-            const modal = document.getElementById('joinUsModal');
-            if (event.target === modal) {
-                modal.style.display = 'none';
-            }
         }
     </script>
 </body>

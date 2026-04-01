@@ -87,6 +87,8 @@ function setupBookingButtons() {
     });
 }
 
+
+
 function handleBookingClick(e) {
     console.log('📅 BOOKING BUTTON CLICKED');
     e.preventDefault();
