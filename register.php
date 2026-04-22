@@ -4,9 +4,13 @@ use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 require 'vendor/autoload.php';
 
-
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
+
+// Start session if not started
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     
@@ -38,8 +42,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         die("Error: Email already registered. Please login.");
     }
     
-    $sql = "INSERT INTO users (full_name, email, phone, password) 
-            VALUES (?, ?, ?, ?)";
+    // IMPORTANT: Added is_admin field with default value 0 (regular user)
+    $sql = "INSERT INTO users (full_name, email, phone, password, is_admin) 
+            VALUES (?, ?, ?, ?, 0)";
     
     $stmt = $conn->prepare($sql);
     $stmt->bind_param("ssss", $full_name, $email, $phone, $hashed_password);
@@ -48,6 +53,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $_SESSION['user_id'] = $stmt->insert_id;
         $_SESSION['user_email'] = $email;
         $_SESSION['user_name'] = $full_name;
+        $_SESSION['is_admin'] = false; // Regular user, not admin
         
         // Send welcome email
         try {

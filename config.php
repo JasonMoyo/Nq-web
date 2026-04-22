@@ -17,7 +17,6 @@ if (file_exists($envFile)) {
     
     foreach ($lines as $line) {
         $line = trim($line);
-        // Skip empty lines and comments
         if (empty($line) || strpos($line, '#') === 0) {
             continue;
         }
@@ -26,45 +25,39 @@ if (file_exists($envFile)) {
             list($key, $value) = explode('=', $line, 2);
             $key = trim($key);
             $value = trim($value);
-            
-            // Remove any quotes if present
             $value = trim($value, '"\'');
             
-            // Set environment variable
             putenv("$key=$value");
             $_ENV[$key] = $value;
             $_SERVER[$key] = $value;
         }
     }
-} else {
-    // Log that .env file is missing (optional)
-    error_log("Warning: .env file not found at " . $envFile);
 }
 
-// Database configuration - Use environment variables
+// Database configuration - Use environment variables for AWS
 define('DB_HOST', getenv('DB_HOST') ?: 'localhost');
 define('DB_USER', getenv('DB_USER') ?: 'root');
 define('DB_PASS', getenv('DB_PASSWORD') ?: '');
 define('DB_NAME', getenv('DB_NAME') ?: 'nqobileq_db');
 
 // Owner contact information
-define('OWNER_PHONE', '+27782280408');
+define('OWNER_PHONE', getenv('OWNER_PHONE') ?: '+27782280408');
 define('OWNER_EMAIL', getenv('OWNER_EMAIL') ?: 'thabani070801@gmail.com');
+
+// Site URL - Important for AWS
+define('SITE_URL', getenv('SITE_URL') ?: 'http://localhost');
 
 // Create connection
 function getDB() {
     $conn = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
     
-    // Check connection
     if ($conn->connect_error) {
-        // For local WampServer, don't try Docker connection
-        // Just show the error
-        die("Connection failed: " . $conn->connect_error);
+        // Log error instead of dying
+        error_log("Connection failed: " . $conn->connect_error);
+        return null;
     }
     
-    // Set charset to UTF-8
     $conn->set_charset("utf8");
-    
     return $conn;
 }
 
@@ -72,13 +65,4 @@ function getDB() {
 if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
-
-// Optional: Add debug code temporarily to verify .env is loading
-// Uncomment the lines below to debug
-/*
-echo "<!-- DEBUG INFO -->\n";
-echo "<!-- SMTP_USERNAME: " . (getenv('SMTP_USERNAME') ? 'SET' : 'NOT SET') . " -->\n";
-echo "<!-- SMTP_PASSWORD: " . (getenv('SMTP_PASSWORD') ? 'SET' : 'NOT SET') . " -->\n";
-echo "<!-- DB_HOST: " . DB_HOST . " -->\n";
-*/
 ?>
