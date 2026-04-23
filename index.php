@@ -27,7 +27,7 @@ $user_name = $_SESSION['user_name'] ?? '';
 
    <!-- Header Section Code -->
 <header style="display: flex; justify-content: space-between; align-items: center; padding: 1rem 9%;">
-    <a href="#" class="logo">SANELE<span>Q</span></a>
+    <a href="#" class="logo">NQOBILE<span>Q</span></a>
     
     <div class='bx bx-menu' id="menu-icon"></div>
     
