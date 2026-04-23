@@ -131,6 +131,58 @@ pipeline {
                 '''
             }
         }
+
+        // ============ DEPLOY TO AGENT EC2 ============
+        stage('Deploy to Agent EC2') {
+            steps {
+                echo '🚀 Deploying to Agent EC2...'
+                sh """
+                    ssh ubuntu@172.31.40.110 << 'ENDSSH'
+                        cd /var/www/html
+                        
+                        echo "📦 Pulling latest code from GitHub..."
+                        git pull origin main
+                        
+                        echo "🛑 Stopping existing containers..."
+                        docker-compose -f docker-compose.yml down
+                        
+                        echo "🏗️ Rebuilding Docker images..."
+                        docker-compose -f docker-compose.yml build --no-cache
+                        
+                        echo "🚀 Starting containers..."
+                        docker-compose -f docker-compose.yml up -d
+                        
+                        echo "⏳ Waiting for containers to be ready..."
+                        sleep 10
+                        
+                        echo "📊 Container status:"
+                        docker-compose -f docker-compose.yml ps
+                        
+                        echo "🌐 Testing website locally..."
+                        curl -f http://localhost && echo "✅ Website is running on agent!"
+ENDSSH
+                """
+            }
+        }
+
+        // ============ VERIFY LIVE WEBSITE ============
+        stage('Verify Live Website') {
+            steps {
+                echo '🌐 Verifying live website...'
+                sh '''
+                    echo "Testing website at http://3.7.14.58"
+                    curl -f http://3.7.14.58 && echo "✅ Website is LIVE with latest changes!"
+                    
+                    echo ""
+                    echo "Testing admin panel..."
+                    curl -f http://3.7.14.58/admin/ && echo "✅ Admin panel accessible" || echo "Admin panel requires login"
+                    
+                    echo ""
+                    echo "Testing phpMyAdmin..."
+                    curl -f http://3.7.14.58:8081 && echo "✅ phpMyAdmin accessible" || echo "phpMyAdmin may not be accessible"
+                '''
+            }
+        }
     }
 
     post {
@@ -143,18 +195,16 @@ pipeline {
                 ├─────────────────────────────────────────────────────────┤
                 │                                                         │
                 │  📍 Application Access:                                 │
-                │     Main Website:  http://localhost                     │
-                │     Admin Panel:   http://localhost/admin               │
-                │     phpMyAdmin:    http://localhost:8081                │
+                │     Main Website:  http://3.7.14.58                     │
+                │     Admin Panel:   http://3.7.14.58/admin               │
+                │     phpMyAdmin:    http://3.7.14.58:8081                │
                 │                                                         │
                 │  🔐 Login Credentials:                                  │
                 │     Admin Email:   admin@nqobileq.com                   │
                 │     Admin Password: admin123                            │
                 │                                                         │
-                │  🐳 Docker Commands:                                    │
-                │     View logs:    docker-compose logs -f                │
-                │     Stop:         docker-compose down                   │
-                │     Restart:      docker-compose restart                │
+                │  🔄 Auto-Deploy Active:                                 │
+                │     Future pushes will automatically update the site!   │
                 │                                                         │
                 └─────────────────────────────────────────────────────────┘
             '''
@@ -170,9 +220,11 @@ pipeline {
                     - Build URL: ${env.BUILD_URL}
                     
                     Access the application at:
-                    http://localhost
+                    http://3.7.14.58
                     
                     Admin Login: admin@nqobileq.com / admin123
+                    
+                    Your changes are now LIVE on the website!
                 """,
                 to: 'thabani070801@gmail.com'
             )
@@ -192,7 +244,7 @@ pipeline {
             '''
             
             sh '''
-                echo "=== Docker Compose Logs ==="
+                echo "=== Docker Compose Logs (Jenkins Master) ==="
                 docker-compose -f ${COMPOSE_FILE} logs --tail=50
                 
                 echo "=== Web Container Logs ==="
@@ -200,6 +252,9 @@ pipeline {
                 
                 echo "=== Database Container Logs ==="
                 docker logs nqobileq_db 2>/dev/null || echo "Database container not running"
+                
+                echo "=== Agent EC2 Logs ==="
+                ssh ubuntu@172.31.40.110 "cd /var/www/html && docker-compose logs --tail=50" 2>/dev/null || echo "Cannot connect to agent"
             '''
             
             // Optional: Send failure notification
@@ -215,6 +270,9 @@ pipeline {
             // Clean up old docker images to save space
             sh 'docker image prune -f || true'
             sh 'docker system prune -f || true'
+            
+            // Clean up on agent as well
+            ssh ubuntu@172.31.40.110 "docker image prune -f && docker system prune -f" 2>/dev/null || true
         }
     }
 }
