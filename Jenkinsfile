@@ -76,9 +76,8 @@ pipeline {
             steps {
                 echo '🗄️ Verifying database connection...'
                 sh '''
-                    # Wait for MySQL to be ready
                     echo "Waiting for MySQL to be ready..."
-                    for i in {1..30}; do
+                    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
                         if docker exec nqobileq_db mysqladmin ping -h localhost --silent; then
                             echo "✅ MySQL is ready!"
                             break
@@ -87,7 +86,6 @@ pipeline {
                         sleep 2
                     done
                     
-                    # Check if database is initialized
                     docker exec nqobileq_db mysql -uroot -prootpassword123 -e "USE nqobileq_db; SHOW TABLES;" || echo "Database may need initialization"
                 '''
             }
@@ -97,15 +95,12 @@ pipeline {
             steps {
                 echo '🌐 Testing web application...'
                 sh '''
-                    # Test main page
                     echo "Testing homepage..."
                     curl -f http://localhost || exit 1
                     
-                    # Test PHP info (optional)
                     echo "Testing PHP..."
                     docker exec nqobileq_web php -v || exit 1
                     
-                    # Test MySQL extension
                     echo "Testing MySQL extension..."
                     docker exec nqobileq_web php -m | grep mysqli || exit 1
                     
@@ -118,10 +113,8 @@ pipeline {
             steps {
                 echo '📀 Running database initialization...'
                 sh '''
-                    # Run init.sql if needed
                     docker exec -i nqobileq_db mysql -uroot -prootpassword123 nqobileq_db < init.sql 2>/dev/null || echo "Init already run or no init.sql"
                     
-                    # Verify admin user exists
                     ADMIN_COUNT=$(docker exec nqobileq_db mysql -uroot -prootpassword123 -se "SELECT COUNT(*) FROM nqobileq_db.users WHERE email='admin@nqobileq.com';")
                     if [ "$ADMIN_COUNT" -gt 0 ]; then
                         echo "✅ Admin user exists"
@@ -136,7 +129,7 @@ pipeline {
         stage('Deploy to Agent EC2') {
             steps {
                 echo '🚀 Deploying to Agent EC2...'
-                sh """
+                sh '''
                     ssh ubuntu@172.31.40.110 << 'ENDSSH'
                         cd /var/www/html
                         
@@ -161,7 +154,7 @@ pipeline {
                         echo "🌐 Testing website locally..."
                         curl -f http://localhost && echo "✅ Website is running on agent!"
 ENDSSH
-                """
+                '''
             }
         }
 
@@ -189,11 +182,8 @@ ENDSSH
         success {
             echo '''
                 ┌─────────────────────────────────────────────────────────┐
-                │                                                         │
                 │     ✅  NQOBILEQ DEPLOYMENT SUCCESSFUL!  ✅             │
-                │                                                         │
                 ├─────────────────────────────────────────────────────────┤
-                │                                                         │
                 │  📍 Application Access:                                 │
                 │     Main Website:  http://3.7.14.58                     │
                 │     Admin Panel:   http://3.7.14.58/admin               │
@@ -203,76 +193,19 @@ ENDSSH
                 │     Admin Email:   admin@nqobileq.com                   │
                 │     Admin Password: admin123                            │
                 │                                                         │
-                │  🔄 Auto-Deploy Active:                                 │
-                │     Future pushes will automatically update the site!   │
-                │                                                         │
+                │  🔄 Auto-Deploy Active!                                 │
                 └─────────────────────────────────────────────────────────┘
             '''
-            
-            // Optional: Send email notification
-            emailext(
-                subject: "✅ NqobileQ Build Successful - Build #${env.BUILD_NUMBER}",
-                body: """
-                    NqobileQ has been successfully deployed!
-                    
-                    Build Information:
-                    - Build Number: ${env.BUILD_NUMBER}
-                    - Build URL: ${env.BUILD_URL}
-                    
-                    Access the application at:
-                    http://3.7.14.58
-                    
-                    Admin Login: admin@nqobileq.com / admin123
-                    
-                    Your changes are now LIVE on the website!
-                """,
-                to: 'thabani070801@gmail.com'
-            )
         }
         
         failure {
-            echo '''
-                ┌─────────────────────────────────────────────────────────┐
-                │                                                         │
-                │     ❌  NQOBILEQ DEPLOYMENT FAILED!  ❌                 │
-                │                                                         │
-                ├─────────────────────────────────────────────────────────┤
-                │                                                         │
-                │  Check the logs below for more details:                 │
-                │                                                         │
-                └─────────────────────────────────────────────────────────┘
-            '''
-            
-            sh '''
-                echo "=== Docker Compose Logs (Jenkins Master) ==="
-                docker-compose -f ${COMPOSE_FILE} logs --tail=50
-                
-                echo "=== Web Container Logs ==="
-                docker logs nqobileq_web 2>/dev/null || echo "Web container not running"
-                
-                echo "=== Database Container Logs ==="
-                docker logs nqobileq_db 2>/dev/null || echo "Database container not running"
-                
-                echo "=== Agent EC2 Logs ==="
-                ssh ubuntu@172.31.40.110 "cd /var/www/html && docker-compose logs --tail=50" 2>/dev/null || echo "Cannot connect to agent"
-            '''
-            
-            // Optional: Send failure notification
-            emailext(
-                subject: "❌ NqobileQ Build Failed - Build #${env.BUILD_NUMBER}",
-                body: "The build has failed. Check Jenkins console for details: ${env.BUILD_URL}",
-                to: 'thabani070801@gmail.com'
-            )
+            echo '❌ DEPLOYMENT FAILED! Check logs above.'
         }
         
         always {
             echo '🧹 Pipeline execution completed.'
-            // Clean up old docker images to save space
             sh 'docker image prune -f || true'
             sh 'docker system prune -f || true'
-            
-            // Clean up on agent as well
-            ssh ubuntu@172.31.40.110 "docker image prune -f && docker system prune -f" 2>/dev/null || true
         }
     }
 }
