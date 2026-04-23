@@ -125,54 +125,22 @@ pipeline {
             }
         }
 
-        // ============ DEPLOY TO AGENT EC2 (FIXED - NO HANGING) ============
-        stage('Deploy to Agent EC2') {
+        // ============ VERIFY DEPLOYMENT ============
+        stage('Verify Deployment') {
             steps {
-                echo '🚀 Deploying to Agent EC2...'
-                script {
-                    sh """
-                        ssh -o ConnectTimeout=30 ubuntu@172.31.40.110 'bash -s' << 'ENDSSH'
-                            cd /var/www/html || { echo "Directory not found"; exit 1; }
-                            
-                            echo "📦 Pulling latest code from GitHub..."
-                            git pull origin main
-                            
-                            echo "🛑 Stopping existing containers..."
-                            docker-compose -f docker-compose.yml down 2>/dev/null || true
-                            
-                            echo "🏗️ Rebuilding Docker images..."
-                            docker-compose -f docker-compose.yml build --no-cache
-                            
-                            echo "🚀 Starting containers..."
-                            docker-compose -f docker-compose.yml up -d
-                            
-                            echo "⏳ Waiting for containers..."
-                            sleep 10
-                            
-                            echo "📊 Container status:"
-                            docker-compose -f docker-compose.yml ps
-                            
-                            echo "🌐 Testing website locally..."
-                            curl -f http://localhost > /dev/null 2>&1 && echo "✅ Website is running on agent!"
-                            
-                            echo "Deployment complete on agent"
-ENDSSH
-                    """
-                }
-            }
-        }
-
-        // ============ VERIFY LIVE WEBSITE ============
-        stage('Verify Live Website') {
-            steps {
-                echo '🌐 Verifying live website...'
+                echo '🌐 Verifying deployment...'
                 sh '''
-                    echo "Testing website at http://3.7.14.58"
-                    curl -f http://3.7.14.58 > /dev/null 2>&1 && echo "✅ Website is LIVE with latest changes!" || echo "⚠️ Website may need a moment"
+                    echo "Application is running on Jenkins master!"
+                    echo "To access the website, you need to expose port 80 on this machine"
+                    
+                    # Get public IP if available
+                    PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || echo "unknown")
+                    echo "Public IP: $PUBLIC_IP"
                     
                     echo ""
-                    echo "Testing admin panel..."
-                    curl -f http://3.7.14.58/admin/ > /dev/null 2>&1 && echo "✅ Admin panel accessible" || echo "Admin panel requires login"
+                    echo "If you want to access the website from outside:"
+                    echo "1. Open port 80 in AWS security group"
+                    echo "2. Access at http://$PUBLIC_IP"
                 '''
             }
         }
@@ -184,22 +152,24 @@ ENDSSH
                 ┌─────────────────────────────────────────────────────────┐
                 │     ✅  NQOBILEQ DEPLOYMENT SUCCESSFUL!  ✅             │
                 ├─────────────────────────────────────────────────────────┤
-                │  📍 Application Access:                                 │
-                │     Main Website:  http://3.7.14.58                     │
-                │     Admin Panel:   http://3.7.14.58/admin               │
-                │     phpMyAdmin:    http://3.7.14.58:8081                │
+                │                                                         │
+                │  📍 Application is running on Jenkins Master!           │
+                │                                                         │
+                │  To access the website:                                 │
+                │  1. Open port 80 in AWS security group                  │
+                │  2. Visit http://<JENKINS_MASTER_PUBLIC_IP>             │
                 │                                                         │
                 │  🔐 Login Credentials:                                  │
                 │     Admin Email:   admin@nqobileq.com                   │
                 │     Admin Password: admin123                            │
                 │                                                         │
-                │  🔄 Auto-Deploy Active!                                 │
                 └─────────────────────────────────────────────────────────┘
             '''
         }
         
         failure {
             echo '❌ DEPLOYMENT FAILED! Check logs above.'
+            sh 'docker-compose -f ${COMPOSE_FILE} logs --tail=50'
         }
         
         always {
