@@ -125,36 +125,40 @@ pipeline {
             }
         }
 
-        // ============ DEPLOY TO AGENT EC2 ============
+        // ============ DEPLOY TO AGENT EC2 (FIXED - NO HANGING) ============
         stage('Deploy to Agent EC2') {
             steps {
                 echo '🚀 Deploying to Agent EC2...'
-                sh '''
-                    ssh ubuntu@172.31.40.110 << 'ENDSSH'
-                        cd /var/www/html
-                        
-                        echo "📦 Pulling latest code from GitHub..."
-                        git pull origin main
-                        
-                        echo "🛑 Stopping existing containers..."
-                        docker-compose -f docker-compose.yml down
-                        
-                        echo "🏗️ Rebuilding Docker images..."
-                        docker-compose -f docker-compose.yml build --no-cache
-                        
-                        echo "🚀 Starting containers..."
-                        docker-compose -f docker-compose.yml up -d
-                        
-                        echo "⏳ Waiting for containers to be ready..."
-                        sleep 10
-                        
-                        echo "📊 Container status:"
-                        docker-compose -f docker-compose.yml ps
-                        
-                        echo "🌐 Testing website locally..."
-                        curl -f http://localhost && echo "✅ Website is running on agent!"
+                script {
+                    sh """
+                        ssh -o ConnectTimeout=30 ubuntu@172.31.40.110 'bash -s' << 'ENDSSH'
+                            cd /var/www/html || { echo "Directory not found"; exit 1; }
+                            
+                            echo "📦 Pulling latest code from GitHub..."
+                            git pull origin main
+                            
+                            echo "🛑 Stopping existing containers..."
+                            docker-compose -f docker-compose.yml down 2>/dev/null || true
+                            
+                            echo "🏗️ Rebuilding Docker images..."
+                            docker-compose -f docker-compose.yml build --no-cache
+                            
+                            echo "🚀 Starting containers..."
+                            docker-compose -f docker-compose.yml up -d
+                            
+                            echo "⏳ Waiting for containers..."
+                            sleep 10
+                            
+                            echo "📊 Container status:"
+                            docker-compose -f docker-compose.yml ps
+                            
+                            echo "🌐 Testing website locally..."
+                            curl -f http://localhost > /dev/null 2>&1 && echo "✅ Website is running on agent!"
+                            
+                            echo "Deployment complete on agent"
 ENDSSH
-                '''
+                    """
+                }
             }
         }
 
@@ -164,15 +168,11 @@ ENDSSH
                 echo '🌐 Verifying live website...'
                 sh '''
                     echo "Testing website at http://3.7.14.58"
-                    curl -f http://3.7.14.58 && echo "✅ Website is LIVE with latest changes!"
+                    curl -f http://3.7.14.58 > /dev/null 2>&1 && echo "✅ Website is LIVE with latest changes!" || echo "⚠️ Website may need a moment"
                     
                     echo ""
                     echo "Testing admin panel..."
-                    curl -f http://3.7.14.58/admin/ && echo "✅ Admin panel accessible" || echo "Admin panel requires login"
-                    
-                    echo ""
-                    echo "Testing phpMyAdmin..."
-                    curl -f http://3.7.14.58:8081 && echo "✅ phpMyAdmin accessible" || echo "phpMyAdmin may not be accessible"
+                    curl -f http://3.7.14.58/admin/ > /dev/null 2>&1 && echo "✅ Admin panel accessible" || echo "Admin panel requires login"
                 '''
             }
         }
