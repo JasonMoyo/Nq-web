@@ -16,12 +16,18 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # Copy application files
 COPY . /var/www/html/
 
+# Create .env file from example if it doesn't exist
+RUN if [ ! -f /var/www/html/.env ] && [ -f /var/www/html/.env.example ]; then \
+        cp /var/www/html/.env.example /var/www/html/.env; \
+    fi
+
 # Install PHP dependencies (safe version)
-RUN if [ -f "composer.json" ]; then composer install --no-interaction; fi
+RUN cd /var/www/html && if [ -f "composer.json" ]; then composer install --no-interaction; fi
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/html \
-    && chmod -R 755 /var/www/html
+    && chmod -R 755 /var/www/html \
+    && chmod -R 777 /var/www/html/vendor 2>/dev/null || true
 
 # Expose Apache port
 EXPOSE 80

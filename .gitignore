@@ -5,16 +5,9 @@
 
 # PHP dependencies
 /vendor/
-.env
-composer.lock
+composer.phar
 
-# Ignore sensitive files
-.env
-*.zip
-*.log
-*.sql
-
-# IDE
+# IDE files
 .vscode/
 .idea/
 *.swp
@@ -24,20 +17,31 @@ composer.lock
 # OS files
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Logs
 *.log
+error_log
+access_log
 
-# Database backups
-*.sql
+# Database backups (keep init.sql)
 *.sql.gz
 *.sql.zip
-!init.sql
+/backups/
 
-# Uploads
-/uploads/*
+# Uploads directory
+/uploads/
 !/uploads/.gitkeep
 
 # Docker
 .dockerignore
 docker-compose.override.yml
+
+# AWS keys
+*.pem
+*.key
+*.p12
+
+# Temp files
+*.tmp
+*.cache

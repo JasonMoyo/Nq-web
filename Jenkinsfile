@@ -34,6 +34,7 @@ pipeline {
                     [ -f "index.php" ] && echo "✅ index.php found" || echo "❌ index.php missing"
                     [ -f "config.php" ] && echo "✅ config.php found" || echo "❌ config.php missing"
                     [ -f "init.sql" ] && echo "✅ init.sql found" || echo "❌ init.sql missing"
+                    [ -f ".env.example" ] && echo "✅ .env.example found" || echo "⚠️ .env.example missing (will be created)"
                 '''
             }
         }
@@ -68,6 +69,22 @@ pipeline {
             }
         }
 
+        stage('Verify Environment Setup') {
+            steps {
+                echo '🔧 Verifying environment setup inside container...'
+                sh '''
+                    echo "Checking .env file..."
+                    docker exec nqobileq_web ls -la /var/www/html/.env 2>/dev/null && echo "✅ .env exists" || echo "⚠️ .env missing"
+                    
+                    echo "Checking vendor directory..."
+                    docker exec nqobileq_web ls -la /var/www/html/vendor/ 2>/dev/null | head -3 && echo "✅ vendor exists" || echo "⚠️ vendor missing"
+                    
+                    echo "Checking PHP extensions..."
+                    docker exec nqobileq_web php -m | grep -E "mysqli|pdo" | head -3
+                '''
+            }
+        }
+
         stage('Verify Database') {
             steps {
                 echo '🗄️ Verifying database connection...'
@@ -99,6 +116,20 @@ pipeline {
             }
         }
 
+        stage('Create Database Backup') {
+            steps {
+                echo '💾 Creating database backup...'
+                sh '''
+                    mkdir -p /home/ubuntu/backups
+                    docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db 2>/dev/null > /home/ubuntu/backups/backup_$(date +%Y%m%d_%H%M%S).sql
+                    echo "✅ Backup created"
+                    
+                    # Keep only last 10 backups
+                    ls -t /home/ubuntu/backups/backup_*.sql 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
+                '''
+            }
+        }
+
         stage('Verify Live Site') {
             steps {
                 echo '🌐 Verifying live site...'
@@ -124,7 +155,7 @@ pipeline {
         }
         failure {
             echo '❌ DEPLOYMENT FAILED!'
-            sh 'docker-compose -f ${COMPOSE_FILE} logs --tail=30'
+            sh 'docker-compose -f ${COMPOSE_FILE} logs --tail=50'
         }
         always {
             echo '🧹 Cleaning up...'
