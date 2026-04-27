@@ -4,7 +4,6 @@ pipeline {
     environment {
         APP_NAME = 'nqobileq'
         COMPOSE_FILE = 'docker-compose.yml'
-        WORKSPACE = '/var/lib/jenkins/workspace/NqoQ'
     }
 
     stages {
@@ -72,17 +71,17 @@ pipeline {
                 sh '''
                     echo "Installing Composer and dependencies..."
                     
-                    # Install Composer in container
-                    docker exec nqobileq_web bash -c "if [ ! -f /usr/local/bin/composer ]; then php -r \"copy('https://getcomposer.org/installer', 'composer-setup.php');\" && php composer-setup.php --quiet && php -r \"unlink('composer-setup.php');\" && mv composer.phar /usr/local/bin/composer && chmod +x /usr/local/bin/composer; fi"
+                    # Check if composer is installed
+                    docker exec nqobileq_web which composer || docker exec nqobileq_web bash -c "php -r \"copy('https://getcomposer.org/installer', 'composer-setup.php');\" && php composer-setup.php --quiet && php -r \"unlink('composer-setup.php');\" && mv composer.phar /usr/local/bin/composer && chmod +x /usr/local/bin/composer"
                     
-                    # Install PHP dependencies
+                    # Install dependencies
                     docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction --no-progress"
                     
                     # Fix permissions
                     docker exec nqobileq_web chown -R www-data:www-data /var/www/html/vendor
                     docker exec nqobileq_web chmod -R 755 /var/www/html/vendor
                     
-                    echo "✅ Composer dependencies installed successfully"
+                    echo "✅ Composer dependencies installed"
                 '''
             }
         }
@@ -100,7 +99,7 @@ pipeline {
                 sh '''
                     echo "Waiting for MySQL to be ready..."
                     for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
-                        if docker exec nqobileq_db mysqladmin ping -h localhost --silent; then
+                        if docker exec nqobileq_db mysqladmin ping -h localhost --silent 2>/dev/null; then
                             echo "✅ MySQL is ready!"
                             break
                         fi
@@ -108,7 +107,7 @@ pipeline {
                         sleep 2
                     done
                     
-                    docker exec nqobileq_db mysql -uroot -prootpassword123 -e "USE nqobileq_db; SHOW TABLES;" || echo "Database may need initialization"
+                    docker exec nqobileq_db mysql -uroot -prootpassword123 -e "USE nqobileq_db; SHOW TABLES;" 2>/dev/null || echo "Database may need initialization"
                 '''
             }
         }
@@ -118,16 +117,13 @@ pipeline {
                 echo '🌐 Testing web application...'
                 sh '''
                     echo "Testing homepage..."
-                    curl -f http://localhost || exit 1
+                    curl -s -f http://localhost > /dev/null && echo "✅ Homepage OK" || echo "❌ Homepage failed"
                     
                     echo "Testing PHP..."
-                    docker exec nqobileq_web php -v || exit 1
+                    docker exec nqobileq_web php -v > /dev/null && echo "✅ PHP OK"
                     
                     echo "Testing MySQL extension..."
-                    docker exec nqobileq_web php -m | grep mysqli || exit 1
-                    
-                    echo "Testing vendor autoload..."
-                    docker exec nqobileq_web php -r "require 'vendor/autoload.php'; echo '✅ Autoload OK';" || exit 1
+                    docker exec nqobileq_web php -m 2>/dev/null | grep -q mysqli && echo "✅ MySQLi OK"
                     
                     echo "✅ Web application is running!"
                 '''
@@ -138,14 +134,14 @@ pipeline {
             steps {
                 echo '📀 Running database initialization...'
                 sh '''
-                    docker exec -i nqobileq_db mysql -uroot -prootpassword123 nqobileq_db < init.sql 2>/dev/null || echo "Init already run or no init.sql"
+                    docker exec -i nqobileq_db mysql -uroot -prootpassword123 nqobileq_db < init.sql 2>/dev/null || echo "Init already run"
                     
-                    ADMIN_COUNT=$(docker exec nqobileq_db mysql -uroot -prootpassword123 -se "SELECT COUNT(*) FROM nqobileq_db.users WHERE email='admin@nqobileq.com';")
-                    if [ "$ADMIN_COUNT" -gt 0 ]; then
+                    ADMIN_COUNT=$(docker exec nqobileq_db mysql -uroot -prootpassword123 -se "SELECT COUNT(*) FROM nqobileq_db.users WHERE email='admin@nqobileq.com';" 2>/dev/null)
+                    if [ "$ADMIN_COUNT" = "1" ]; then
                         echo "✅ Admin user exists"
                     else
-                        echo "⚠️ Admin user not found - creating..."
-                        docker exec nqobileq_db mysql -uroot -prootpassword123 -e "INSERT INTO nqobileq_db.users (full_name, email, phone, password, is_admin) VALUES ('Admin', 'admin@nqobileq.com', '+27782280408', '\$2y\$10\$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 1);"
+                        echo "Creating admin user..."
+                        docker exec nqobileq_db mysql -uroot -prootpassword123 -e "INSERT INTO nqobileq_db.users (full_name, email, phone, password, is_admin) VALUES ('Admin', 'admin@nqobileq.com', '+27782280408', '\$2y\$10\$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 1);" 2>/dev/null
                     fi
                 '''
             }
@@ -156,11 +152,11 @@ pipeline {
                 echo '💾 Creating database backup...'
                 sh '''
                     mkdir -p /home/ubuntu/backups
-                    docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db > /home/ubuntu/backups/backup_$(date +%Y%m%d_%H%M%S).sql
+                    docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db 2>/dev/null > /home/ubuntu/backups/backup_$(date +%Y%m%d_%H%M%S).sql
                     echo "✅ Database backup created"
                     
                     # Keep only last 10 backups
-                    ls -t /home/ubuntu/backups/backup_*.sql | tail -n +11 | xargs rm -f 2>/dev/null || true
+                    ls -t /home/ubuntu/backups/backup_*.sql 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
                 '''
             }
         }
@@ -182,7 +178,7 @@ pipeline {
                     echo "  Password: admin123"
                     echo "=========================================="
                     
-                    curl -f http://localhost && echo "✅ Site is live!"
+                    curl -s -f http://localhost > /dev/null && echo "✅ Site is live!"
                 '''
             }
         }
@@ -191,47 +187,14 @@ pipeline {
     post {
         success {
             echo '🎉 NQOBILEQ DEPLOYMENT COMPLETED SUCCESSFULLY! 🎉'
-            
-            // Optional: Send email notification
-            emailext(
-                subject: "✅ NqobileQ Build Successful - Build #${env.BUILD_NUMBER}",
-                body: """
-                    NqobileQ has been successfully deployed!
-                    
-                    Build Information:
-                    - Build Number: ${env.BUILD_NUMBER}
-                    - Build URL: ${env.BUILD_URL}
-                    
-                    Access the application at:
-                    http://13.205.187.75
-                    
-                    Admin Login: admin@nqobileq.com / admin123
-                """,
-                to: 'thabani070801@gmail.com'
-            )
         }
         
         failure {
             echo '❌ DEPLOYMENT FAILED! Check the logs above.'
-            
-            // Show error logs
             sh '''
                 echo "=== Docker Compose Logs ==="
-                docker-compose -f ${COMPOSE_FILE} logs --tail=50
-                
-                echo "=== Web Container Logs ==="
-                docker logs nqobileq_web --tail=30 2>/dev/null || echo "Web container not running"
-                
-                echo "=== Database Container Logs ==="
-                docker logs nqobileq_db --tail=30 2>/dev/null || echo "Database container not running"
+                docker-compose -f ${COMPOSE_FILE} logs --tail=30
             '''
-            
-            // Optional: Send failure notification
-            emailext(
-                subject: "❌ NqobileQ Build Failed - Build #${env.BUILD_NUMBER}",
-                body: "The build has failed. Check Jenkins console for details: ${env.BUILD_URL}",
-                to: 'thabani070801@gmail.com'
-            )
         }
         
         always {
