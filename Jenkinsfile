@@ -38,6 +38,36 @@ pipeline {
             }
         }
 
+        // ============ NEW: INSTALL PHP DEPENDENCIES ============
+        stage('Install PHP Dependencies') {
+            steps {
+                echo '📦 Installing PHP dependencies with Composer...'
+                sh '''
+                    echo "Installing Composer and dependencies..."
+                    
+                    # Install Composer in container
+                    docker exec nqobileq_web bash -c "
+                        if [ ! -f /usr/local/bin/composer ]; then
+                            php -r \"copy('https://getcomposer.org/installer', 'composer-setup.php');\"
+                            php composer-setup.php --quiet
+                            php -r \"unlink('composer-setup.php');\"
+                            mv composer.phar /usr/local/bin/composer
+                            chmod +x /usr/local/bin/composer
+                        fi
+                    "
+                    
+                    # Install PHP dependencies
+                    docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction --no-progress"
+                    
+                    # Fix permissions
+                    docker exec nqobileq_web chown -R www-data:www-data /var/www/html/vendor
+                    docker exec nqobileq_web chmod -R 755 /var/www/html/vendor
+                    
+                    echo "✅ Composer dependencies installed successfully"
+                '''
+            }
+        }
+
         stage('Stop Existing Containers') {
             steps {
                 echo '🛑 Stopping existing containers...'
@@ -62,6 +92,37 @@ pipeline {
                 sh 'docker-compose -f ${COMPOSE_FILE} up -d'
                 echo 'Waiting for services to be ready...'
                 sleep 15
+            }
+        }
+
+        // ============ NEW: RUN COMPOSER AFTER CONTAINER START ============
+        stage('Run Composer in Container') {
+            steps {
+                echo '📦 Running Composer in running container...'
+                sh '''
+                    # Ensure composer is installed
+                    docker exec nqobileq_web bash -c "
+                        if [ ! -f /usr/local/bin/composer ]; then
+                            php -r \"copy('https://getcomposer.org/installer', 'composer-setup.php');\"
+                            php composer-setup.php --quiet
+                            php -r \"unlink('composer-setup.php');\"
+                            mv composer.phar /usr/local/bin/composer
+                            chmod +x /usr/local/bin/composer
+                        fi
+                    "
+                    
+                    # Run composer install
+                    docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction --no-progress"
+                    
+                    # Fix permissions
+                    docker exec nqobileq_web chown -R www-data:www-data /var/www/html/vendor
+                    docker exec nqobileq_web chmod -R 755 /var/www/html/vendor
+                    
+                    # Verify vendor directory exists
+                    docker exec nqobileq_web ls -la /var/www/html/vendor/ | head -5
+                    
+                    echo "✅ Composer dependencies ready"
+                '''
             }
         }
 
@@ -104,6 +165,9 @@ pipeline {
                     echo "Testing MySQL extension..."
                     docker exec nqobileq_web php -m | grep mysqli || exit 1
                     
+                    echo "Testing vendor autoload..."
+                    docker exec nqobileq_web php -r "require 'vendor/autoload.php'; echo '✅ Autoload OK';" || exit 1
+                    
                     echo "✅ Web application is running!"
                 '''
             }
@@ -131,16 +195,15 @@ pipeline {
                 echo '🌐 Verifying deployment...'
                 sh '''
                     echo "Application is running on Jenkins master!"
-                    echo "To access the website, you need to expose port 80 on this machine"
                     
                     # Get public IP if available
-                    PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || echo "unknown")
+                    PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || echo "13.205.187.75")
                     echo "Public IP: $PUBLIC_IP"
                     
                     echo ""
-                    echo "If you want to access the website from outside:"
-                    echo "1. Open port 80 in AWS security group"
-                    echo "2. Access at http://$PUBLIC_IP"
+                    echo "Website is accessible at: http://$PUBLIC_IP"
+                    echo "Admin panel: http://$PUBLIC_IP/admin/"
+                    echo "phpMyAdmin: http://$PUBLIC_IP:8081"
                 '''
             }
         }
@@ -155,13 +218,14 @@ pipeline {
                 │                                                         │
                 │  📍 Application is running on Jenkins Master!           │
                 │                                                         │
-                │  To access the website:                                 │
-                │  1. Open port 80 in AWS security group                  │
-                │  2. Visit http://<JENKINS_MASTER_PUBLIC_IP>             │
-                │                                                         │
                 │  🔐 Login Credentials:                                  │
                 │     Admin Email:   admin@nqobileq.com                   │
                 │     Admin Password: admin123                            │
+                │                                                         │
+                │  📍 Access URLs:                                        │
+                │     Website:      http://13.205.187.75                  │
+                │     Admin Panel:  http://13.205.187.75/admin/           │
+                │     phpMyAdmin:   http://13.205.187.75:8081             │
                 │                                                         │
                 └─────────────────────────────────────────────────────────┘
             '''
