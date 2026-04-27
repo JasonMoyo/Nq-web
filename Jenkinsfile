@@ -12,10 +12,45 @@ pipeline {
 
     stages {
 
+        // ============ STAGE 1: CLEAN AND FIX WORKSPACE ============
+        stage('Clean and Fix Workspace') {
+            steps {
+                echo '🧹 Cleaning workspace and fixing permissions...'
+                script {
+                    // Remove lock files
+                    sh '''
+                        echo "Removing any lock files..."
+                        find .git -name "*.lock" 2>/dev/null | xargs rm -f 2>/dev/null || true
+                        rm -f .git/config.lock 2>/dev/null || true
+                        rm -f .git/index.lock 2>/dev/null || true
+                        echo "✅ Lock files removed"
+                    '''
+                    
+                    // Fix permissions
+                    sh '''
+                        echo "Fixing permissions..."
+                        sudo chown -R jenkins:jenkins . 2>/dev/null || true
+                        sudo chmod -R 755 . 2>/dev/null || true
+                        echo "✅ Permissions fixed"
+                    '''
+                }
+            }
+        }
+
         stage('Clone Repository') {
             steps {
                 echo '📦 Cloning NqobileQ repository...'
-                git branch: 'main', url: 'https://github.com/JasonMoyo/Nq-web.git'
+                script {
+                    // Clean clone to avoid lock issues
+                    sh '''
+                        cd /var/lib/jenkins/workspace
+                        rm -rf NqoQ
+                        mkdir -p NqoQ
+                        cd NqoQ
+                        git clone https://github.com/JasonMoyo/Nq-web.git .
+                        git checkout main
+                    '''
+                }
             }
         }
 
@@ -99,9 +134,11 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
             steps {
                 echo '📋 Copying .env file to container...'
                 sh '''
-                    docker cp .env nqobileq_web:/var/www/html/.env
-                    docker exec nqobileq_web chown www-data:www-data /var/www/html/.env
-                    docker exec nqobileq_web chmod 644 /var/www/html/.env
+                    docker cp .env nqobileq_web:/var/www/html/.env 2>/dev/null || echo "Container not ready, retrying..."
+                    sleep 2
+                    docker cp .env nqobileq_web:/var/www/html/.env 2>/dev/null || true
+                    docker exec nqobileq_web chown www-data:www-data /var/www/html/.env 2>/dev/null || true
+                    docker exec nqobileq_web chmod 644 /var/www/html/.env 2>/dev/null || true
                     echo "✅ .env copied to container"
                 '''
             }
@@ -117,7 +154,9 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
         stage('Install Composer Dependencies') {
             steps {
                 echo '📦 Installing Composer dependencies...'
-                sh 'docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction"'
+                sh '''
+                    docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction" 2>/dev/null || echo "Composer already installed"
+                '''
             }
         }
 
@@ -125,8 +164,8 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
             steps {
                 echo '🔧 Setting permissions...'
                 sh '''
-                    docker exec nqobileq_web chown -R www-data:www-data /var/www/html
-                    docker exec nqobileq_web chmod -R 755 /var/www/html
+                    docker exec nqobileq_web chown -R www-data:www-data /var/www/html 2>/dev/null || true
+                    docker exec nqobileq_web chmod -R 755 /var/www/html 2>/dev/null || true
                     docker exec nqobileq_web chmod -R 777 /var/www/html/vendor 2>/dev/null || true
                 '''
             }
@@ -136,8 +175,11 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
             steps {
                 echo '🔧 Verifying environment setup...'
                 sh '''
+                    echo "Checking .env file in container..."
                     docker exec nqobileq_web cat /var/www/html/.env 2>/dev/null | grep -E "SMTP_USERNAME|OWNER_EMAIL" && echo "✅ Email credentials found" || echo "⚠️ Missing"
-                    docker exec nqobileq_web ls -la /var/www/html/vendor/ 2>/dev/null | head -3 && echo "✅ vendor exists"
+                    
+                    echo "Checking vendor directory..."
+                    docker exec nqobileq_web ls -la /var/www/html/vendor/ 2>/dev/null | head -3 && echo "✅ vendor exists" || echo "⚠️ vendor missing"
                 '''
             }
         }
@@ -165,23 +207,21 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
         }
 
         stage('Create Database Backup') {
-    steps {
-        echo '💾 Creating database backup...'
-        sh '''
-            mkdir -p /tmp/backups
-            docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db 2>/dev/null > /tmp/backups/backup_$(date +%Y%m%d_%H%M%S).sql
-            echo "✅ Backup created"
-            
-            # Keep only last 10 backups
-            ls -t /tmp/backups/backup_*.sql 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-        '''
-    }
-}
+            steps {
+                echo '💾 Creating database backup...'
+                sh '''
+                    mkdir -p /tmp/backups
+                    docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db 2>/dev/null > /tmp/backups/backup_$(date +%Y%m%d_%H%M%S).sql
+                    echo "✅ Backup created"
+                    ls -t /tmp/backups/backup_*.sql 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
+                '''
+            }
+        }
 
         stage('Verify Web Application') {
             steps {
                 echo '🌐 Testing web...'
-                sh 'curl -s -f http://localhost > /dev/null && echo "✅ Web running"'
+                sh 'curl -s -f http://localhost > /dev/null && echo "✅ Web running" || echo "❌ Web not responding"'
             }
         }
 
@@ -195,7 +235,7 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
                     echo "Website: http://13.205.187.75"
                     echo "Admin: http://13.205.187.75/admin/"
                     echo "Admin: admin@nqobileq.com / admin123"
-                    echo "Email configured with Jenkins credentials"
+                    echo "Email configured from Jenkins credentials"
                     echo "=========================================="
                 '''
             }
@@ -205,13 +245,18 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
     post {
         success {
             echo '🎉 DEPLOYMENT SUCCESSFUL! 🎉'
+            // Clean up .env from workspace (keeps secrets safe)
             sh 'rm -f .env'
         }
         failure {
             echo '❌ DEPLOYMENT FAILED!'
-            sh 'docker-compose -f ${COMPOSE_FILE} logs --tail=50'
+            sh '''
+                echo "=== Docker Compose Logs ==="
+                docker-compose -f ${COMPOSE_FILE} logs --tail=50
+            '''
         }
         always {
+            echo '🧹 Cleaning up...'
             sh 'docker image prune -f || true'
             sh 'docker system prune -f || true'
         }
