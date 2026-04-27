@@ -5,13 +5,10 @@ pipeline {
         APP_NAME = 'nqobileq'
         COMPOSE_FILE = 'docker-compose.yml'
         
-        // ============ ADD CREDENTIALS HERE ============
-        // Retrieve credentials from Jenkins
+        // SMTP Credentials from Jenkins
         SMTP_USERNAME = credentials('smtp-username')
         SMTP_PASSWORD = credentials('smtp-password')
         OWNER_EMAIL = credentials('owner-email')
-        // Optional: Database password if needed
-        // DB_PASSWORD = credentials('db-password')
     }
 
     stages {
@@ -47,12 +44,10 @@ pipeline {
             }
         }
 
-        // ============ NEW STAGE: Create .env with credentials ============
         stage('Create Environment File') {
             steps {
                 echo '🔧 Creating .env file with credentials from Jenkins...'
-                sh '''
-                    # Create .env file with all configurations
+                sh """
                     cat > .env << EOF
 # Database Configuration
 DB_HOST=db
@@ -60,7 +55,7 @@ DB_USER=nqobileq_user
 DB_PASSWORD=userpassword123
 DB_NAME=nqobileq_db
 
-# Email Configuration (from Jenkins credentials)
+# Email Configuration
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=${SMTP_USERNAME}
@@ -75,11 +70,9 @@ APP_ENV=production
 OWNER_PHONE=+27782280408
 OWNER_EMAIL=${OWNER_EMAIL}
 EOF
-                    echo "✅ .env file created successfully"
-                    
-                    # Show that email is configured (hide password)
+                    echo "✅ .env file created"
                     echo "Email configured for: ${SMTP_USERNAME}"
-                '''
+                """
             }
         }
 
@@ -213,7 +206,7 @@ EOF
     post {
         success {
             echo '🎉 DEPLOYMENT SUCCESSFUL! 🎉'
-            # Clean up .env file from workspace (optional - security)
+            // Clean up .env file from workspace
             sh 'rm -f .env'
         }
         failure {

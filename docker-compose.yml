@@ -37,6 +37,12 @@ services:
       - DB_USER=nqobileq_user
       - DB_PASSWORD=userpassword123
       - DB_NAME=nqobileq_db
+      # Email configuration for PHPMailer
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_SECURE=tls
+      - SITE_URL=http://13.205.187.75
+      - APP_ENV=production
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
