@@ -243,22 +243,19 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
     }
 
     post {
-        success {
-            echo '🎉 DEPLOYMENT SUCCESSFUL! 🎉'
-            // Clean up .env from workspace (keeps secrets safe)
-            sh 'rm -f .env'
-        }
-        failure {
-            echo '❌ DEPLOYMENT FAILED!'
-            sh '''
-                echo "=== Docker Compose Logs ==="
-                docker-compose -f ${COMPOSE_FILE} logs --tail=50
-            '''
-        }
-        always {
-            echo '🧹 Cleaning up...'
-            sh 'docker image prune -f || true'
-            sh 'docker system prune -f || true'
-        }
+    success {
+        echo '🎉 DEPLOYMENT SUCCESSFUL! 🎉'
+        // Remove or comment out this line:
+        // sh 'rm -f .env'
     }
+    failure {
+        echo '❌ DEPLOYMENT FAILED!'
+        sh 'docker-compose -f ${COMPOSE_FILE} logs --tail=50'
+    }
+    always {
+        echo '🧹 Cleaning up...'
+        sh 'docker image prune -f || true'
+        sh 'docker system prune -f || true'
+    }
+}
 }
