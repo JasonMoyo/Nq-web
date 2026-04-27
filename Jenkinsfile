@@ -4,6 +4,14 @@ pipeline {
     environment {
         APP_NAME = 'nqobileq'
         COMPOSE_FILE = 'docker-compose.yml'
+        
+        // ============ ADD CREDENTIALS HERE ============
+        // Retrieve credentials from Jenkins
+        SMTP_USERNAME = credentials('smtp-username')
+        SMTP_PASSWORD = credentials('smtp-password')
+        OWNER_EMAIL = credentials('owner-email')
+        // Optional: Database password if needed
+        // DB_PASSWORD = credentials('db-password')
     }
 
     stages {
@@ -34,7 +42,43 @@ pipeline {
                     [ -f "index.php" ] && echo "✅ index.php found" || echo "❌ index.php missing"
                     [ -f "config.php" ] && echo "✅ config.php found" || echo "❌ config.php missing"
                     [ -f "init.sql" ] && echo "✅ init.sql found" || echo "❌ init.sql missing"
-                    [ -f ".env.example" ] && echo "✅ .env.example found" || echo "⚠️ .env.example missing (will be created)"
+                    [ -f ".env.example" ] && echo "✅ .env.example found" || echo "⚠️ .env.example missing"
+                '''
+            }
+        }
+
+        // ============ NEW STAGE: Create .env with credentials ============
+        stage('Create Environment File') {
+            steps {
+                echo '🔧 Creating .env file with credentials from Jenkins...'
+                sh '''
+                    # Create .env file with all configurations
+                    cat > .env << EOF
+# Database Configuration
+DB_HOST=db
+DB_USER=nqobileq_user
+DB_PASSWORD=userpassword123
+DB_NAME=nqobileq_db
+
+# Email Configuration (from Jenkins credentials)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=${SMTP_USERNAME}
+SMTP_PASSWORD=${SMTP_PASSWORD}
+SMTP_SECURE=tls
+
+# Site Configuration
+SITE_URL=http://13.205.187.75
+APP_ENV=production
+
+# Contact Info
+OWNER_PHONE=+27782280408
+OWNER_EMAIL=${OWNER_EMAIL}
+EOF
+                    echo "✅ .env file created successfully"
+                    
+                    # Show that email is configured (hide password)
+                    echo "Email configured for: ${SMTP_USERNAME}"
                 '''
             }
         }
@@ -74,7 +118,7 @@ pipeline {
                 echo '🔧 Verifying environment setup inside container...'
                 sh '''
                     echo "Checking .env file..."
-                    docker exec nqobileq_web ls -la /var/www/html/.env 2>/dev/null && echo "✅ .env exists" || echo "⚠️ .env missing"
+                    docker exec nqobileq_web cat /var/www/html/.env 2>/dev/null | grep -E "SMTP_USERNAME|OWNER_EMAIL" && echo "✅ Email credentials found" || echo "⚠️ Email credentials missing"
                     
                     echo "Checking vendor directory..."
                     docker exec nqobileq_web ls -la /var/www/html/vendor/ 2>/dev/null | head -3 && echo "✅ vendor exists" || echo "⚠️ vendor missing"
@@ -116,6 +160,22 @@ pipeline {
             }
         }
 
+        stage('Test Email Configuration') {
+            steps {
+                echo '📧 Testing email configuration...'
+                sh '''
+                    docker exec nqobileq_web bash -c "php -r \\"
+                        \\$env = parse_ini_file('/var/www/html/.env');
+                        if(isset(\\$env['SMTP_USERNAME'])) {
+                            echo '✅ SMTP_USERNAME configured: ' . \\$env['SMTP_USERNAME'] . '\\n';
+                        } else {
+                            echo '❌ SMTP_USERNAME not found\\n';
+                        }
+                    \\""
+                '''
+            }
+        }
+
         stage('Create Database Backup') {
             steps {
                 echo '💾 Creating database backup...'
@@ -143,6 +203,7 @@ pipeline {
                     echo "phpMyAdmin: http://$PUBLIC_IP:8081"
                     echo ""
                     echo "Admin Login: admin@nqobileq.com / admin123"
+                    echo "Email configured for: ${SMTP_USERNAME}"
                     echo "=========================================="
                 '''
             }
@@ -152,6 +213,8 @@ pipeline {
     post {
         success {
             echo '🎉 DEPLOYMENT SUCCESSFUL! 🎉'
+            # Clean up .env file from workspace (optional - security)
+            sh 'rm -f .env'
         }
         failure {
             echo '❌ DEPLOYMENT FAILED!'
