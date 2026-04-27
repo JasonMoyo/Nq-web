@@ -153,17 +153,18 @@ EOF
         }
 
         stage('Create Database Backup') {
-            steps {
-                echo '💾 Creating database backup...'
-                sh '''
-                    mkdir -p /home/ubuntu/backups
-                    docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db 2>/dev/null > /home/ubuntu/backups/backup_$(date +%Y%m%d_%H%M%S).sql
-                    echo "✅ Backup created"
-                    
-                    ls -t /home/ubuntu/backups/backup_*.sql 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-                '''
-            }
-        }
+    steps {
+        echo '💾 Creating database backup...'
+        sh '''
+            mkdir -p /tmp/backups
+            docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db 2>/dev/null > /tmp/backups/backup_$(date +%Y%m%d_%H%M%S).sql
+            echo "✅ Backup created"
+            
+            # Keep only last 10 backups
+            ls -t /tmp/backups/backup_*.sql 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
+        '''
+    }
+}
 
         stage('Verify Live Site') {
             steps {
