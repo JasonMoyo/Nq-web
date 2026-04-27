@@ -5,7 +5,6 @@ pipeline {
         APP_NAME = 'nqobileq'
         COMPOSE_FILE = 'docker-compose.yml'
         
-        // Credentials from Jenkins
         SMTP_USERNAME = credentials('smtp-username')
         SMTP_PASSWORD = credentials('smtp-password')
         OWNER_EMAIL = credentials('owner-email')
@@ -43,7 +42,6 @@ pipeline {
             }
         }
 
-        // ============ CREATE .env FILE WITH REAL CREDENTIALS ============
         stage('Create .env File') {
             steps {
                 echo '🔧 Creating .env file with credentials from Jenkins...'
@@ -71,7 +69,6 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
 """
                 }
                 sh 'echo "✅ .env file created"'
-                sh 'cat .env | grep SMTP_USERNAME'
             }
         }
 
@@ -120,9 +117,7 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
         stage('Install Composer Dependencies') {
             steps {
                 echo '📦 Installing Composer dependencies...'
-                sh '''
-                    docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction"
-                '''
+                sh 'docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction"'
             }
         }
 
@@ -141,10 +136,7 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
             steps {
                 echo '🔧 Verifying environment setup...'
                 sh '''
-                    echo "Checking .env file in container..."
                     docker exec nqobileq_web cat /var/www/html/.env 2>/dev/null | grep -E "SMTP_USERNAME|OWNER_EMAIL" && echo "✅ Email credentials found" || echo "⚠️ Missing"
-                    
-                    echo "Checking vendor directory..."
                     docker exec nqobileq_web ls -la /var/www/html/vendor/ 2>/dev/null | head -3 && echo "✅ vendor exists"
                 '''
             }
@@ -172,26 +164,24 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
             }
         }
 
+        stage('Create Database Backup') {
+    steps {
+        echo '💾 Creating database backup...'
+        sh '''
+            mkdir -p /tmp/backups
+            docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db 2>/dev/null > /tmp/backups/backup_$(date +%Y%m%d_%H%M%S).sql
+            echo "✅ Backup created"
+            
+            # Keep only last 10 backups
+            ls -t /tmp/backups/backup_*.sql 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
+        '''
+    }
+}
+
         stage('Verify Web Application') {
             steps {
                 echo '🌐 Testing web...'
                 sh 'curl -s -f http://localhost > /dev/null && echo "✅ Web running"'
-            }
-        }
-
-        stage('Test Email Configuration') {
-            steps {
-                echo '📧 Testing email configuration...'
-                sh '''
-                    docker exec nqobileq_web bash -c "php -r \\"
-                        \\$env = parse_ini_file('/var/www/html/.env');
-                        if(isset(\\$env['SMTP_USERNAME']) && \\$env['SMTP_USERNAME'] != 'your-email@gmail.com') {
-                            echo '✅ SMTP configured for: ' . \\$env['SMTP_USERNAME'] . '\\n';
-                        } else {
-                            echo '❌ SMTP not properly configured\\n';
-                        }
-                    \\""
-                '''
             }
         }
 
@@ -205,7 +195,7 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
                     echo "Website: http://13.205.187.75"
                     echo "Admin: http://13.205.187.75/admin/"
                     echo "Admin: admin@nqobileq.com / admin123"
-                    echo "Email configured for: ${SMTP_USERNAME}"
+                    echo "Email configured with Jenkins credentials"
                     echo "=========================================="
                 '''
             }
@@ -215,7 +205,6 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
     post {
         success {
             echo '🎉 DEPLOYMENT SUCCESSFUL! 🎉'
-            // Clean up .env from workspace (optional, keeps secrets safe)
             sh 'rm -f .env'
         }
         failure {
