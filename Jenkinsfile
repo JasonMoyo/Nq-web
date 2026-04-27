@@ -71,7 +71,6 @@ OWNER_PHONE=+27782280408
 OWNER_EMAIL=${OWNER_EMAIL}
 EOF
                     echo "✅ .env file created"
-                    echo "Email configured for: ${SMTP_USERNAME}"
                 """
             }
         }
@@ -153,22 +152,6 @@ EOF
             }
         }
 
-        stage('Test Email Configuration') {
-            steps {
-                echo '📧 Testing email configuration...'
-                sh '''
-                    docker exec nqobileq_web bash -c "php -r \\"
-                        \\$env = parse_ini_file('/var/www/html/.env');
-                        if(isset(\\$env['SMTP_USERNAME'])) {
-                            echo '✅ SMTP_USERNAME configured: ' . \\$env['SMTP_USERNAME'] . '\\n';
-                        } else {
-                            echo '❌ SMTP_USERNAME not found\\n';
-                        }
-                    \\""
-                '''
-            }
-        }
-
         stage('Create Database Backup') {
             steps {
                 echo '💾 Creating database backup...'
@@ -177,7 +160,6 @@ EOF
                     docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db 2>/dev/null > /home/ubuntu/backups/backup_$(date +%Y%m%d_%H%M%S).sql
                     echo "✅ Backup created"
                     
-                    # Keep only last 10 backups
                     ls -t /home/ubuntu/backups/backup_*.sql 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
                 '''
             }
@@ -196,7 +178,6 @@ EOF
                     echo "phpMyAdmin: http://$PUBLIC_IP:8081"
                     echo ""
                     echo "Admin Login: admin@nqobileq.com / admin123"
-                    echo "Email configured for: ${SMTP_USERNAME}"
                     echo "=========================================="
                 '''
             }
@@ -206,7 +187,6 @@ EOF
     post {
         success {
             echo '🎉 DEPLOYMENT SUCCESSFUL! 🎉'
-            // Clean up .env file from workspace
             sh 'rm -f .env'
         }
         failure {
