@@ -4,6 +4,7 @@ pipeline {
     environment {
         APP_NAME = 'nqobileq'
         COMPOSE_FILE = 'docker-compose.yml'
+        WORKSPACE = '/var/lib/jenkins/workspace/NqoQ'
     }
 
     stages {
@@ -38,36 +39,6 @@ pipeline {
             }
         }
 
-        // ============ NEW: INSTALL PHP DEPENDENCIES ============
-        stage('Install PHP Dependencies') {
-            steps {
-                echo '📦 Installing PHP dependencies with Composer...'
-                sh '''
-                    echo "Installing Composer and dependencies..."
-                    
-                    # Install Composer in container
-                    docker exec nqobileq_web bash -c "
-                        if [ ! -f /usr/local/bin/composer ]; then
-                            php -r \"copy('https://getcomposer.org/installer', 'composer-setup.php');\"
-                            php composer-setup.php --quiet
-                            php -r \"unlink('composer-setup.php');\"
-                            mv composer.phar /usr/local/bin/composer
-                            chmod +x /usr/local/bin/composer
-                        fi
-                    "
-                    
-                    # Install PHP dependencies
-                    docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction --no-progress"
-                    
-                    # Fix permissions
-                    docker exec nqobileq_web chown -R www-data:www-data /var/www/html/vendor
-                    docker exec nqobileq_web chmod -R 755 /var/www/html/vendor
-                    
-                    echo "✅ Composer dependencies installed successfully"
-                '''
-            }
-        }
-
         stage('Stop Existing Containers') {
             steps {
                 echo '🛑 Stopping existing containers...'
@@ -95,33 +66,23 @@ pipeline {
             }
         }
 
-        // ============ NEW: RUN COMPOSER AFTER CONTAINER START ============
-        stage('Run Composer in Container') {
+        stage('Install PHP Dependencies') {
             steps {
-                echo '📦 Running Composer in running container...'
+                echo '📦 Installing PHP dependencies with Composer...'
                 sh '''
-                    # Ensure composer is installed
-                    docker exec nqobileq_web bash -c "
-                        if [ ! -f /usr/local/bin/composer ]; then
-                            php -r \"copy('https://getcomposer.org/installer', 'composer-setup.php');\"
-                            php composer-setup.php --quiet
-                            php -r \"unlink('composer-setup.php');\"
-                            mv composer.phar /usr/local/bin/composer
-                            chmod +x /usr/local/bin/composer
-                        fi
-                    "
+                    echo "Installing Composer and dependencies..."
                     
-                    # Run composer install
+                    # Install Composer in container
+                    docker exec nqobileq_web bash -c "if [ ! -f /usr/local/bin/composer ]; then php -r \"copy('https://getcomposer.org/installer', 'composer-setup.php');\" && php composer-setup.php --quiet && php -r \"unlink('composer-setup.php');\" && mv composer.phar /usr/local/bin/composer && chmod +x /usr/local/bin/composer; fi"
+                    
+                    # Install PHP dependencies
                     docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction --no-progress"
                     
                     # Fix permissions
                     docker exec nqobileq_web chown -R www-data:www-data /var/www/html/vendor
                     docker exec nqobileq_web chmod -R 755 /var/www/html/vendor
                     
-                    # Verify vendor directory exists
-                    docker exec nqobileq_web ls -la /var/www/html/vendor/ | head -5
-                    
-                    echo "✅ Composer dependencies ready"
+                    echo "✅ Composer dependencies installed successfully"
                 '''
             }
         }
@@ -183,27 +144,45 @@ pipeline {
                     if [ "$ADMIN_COUNT" -gt 0 ]; then
                         echo "✅ Admin user exists"
                     else
-                        echo "⚠️ Admin user not found - run init.sql manually"
+                        echo "⚠️ Admin user not found - creating..."
+                        docker exec nqobileq_db mysql -uroot -prootpassword123 -e "INSERT INTO nqobileq_db.users (full_name, email, phone, password, is_admin) VALUES ('Admin', 'admin@nqobileq.com', '+27782280408', '\$2y\$10\$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 1);"
                     fi
                 '''
             }
         }
 
-        // ============ VERIFY DEPLOYMENT ============
-        stage('Verify Deployment') {
+        stage('Create Backup') {
             steps {
-                echo '🌐 Verifying deployment...'
+                echo '💾 Creating database backup...'
                 sh '''
-                    echo "Application is running on Jenkins master!"
+                    mkdir -p /home/ubuntu/backups
+                    docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db > /home/ubuntu/backups/backup_$(date +%Y%m%d_%H%M%S).sql
+                    echo "✅ Database backup created"
                     
-                    # Get public IP if available
+                    # Keep only last 10 backups
+                    ls -t /home/ubuntu/backups/backup_*.sql | tail -n +11 | xargs rm -f 2>/dev/null || true
+                '''
+            }
+        }
+
+        stage('Verify Live Site') {
+            steps {
+                echo '🌐 Verifying live site...'
+                sh '''
                     PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || echo "13.205.187.75")
-                    echo "Public IP: $PUBLIC_IP"
-                    
+                    echo "=========================================="
+                    echo "✅ DEPLOYMENT SUCCESSFUL!"
+                    echo "=========================================="
+                    echo "Website:      http://$PUBLIC_IP"
+                    echo "Admin Panel:  http://$PUBLIC_IP/admin/"
+                    echo "phpMyAdmin:   http://$PUBLIC_IP:8081"
                     echo ""
-                    echo "Website is accessible at: http://$PUBLIC_IP"
-                    echo "Admin panel: http://$PUBLIC_IP/admin/"
-                    echo "phpMyAdmin: http://$PUBLIC_IP:8081"
+                    echo "Admin Login:"
+                    echo "  Email: admin@nqobileq.com"
+                    echo "  Password: admin123"
+                    echo "=========================================="
+                    
+                    curl -f http://localhost && echo "✅ Site is live!"
                 '''
             }
         }
@@ -211,33 +190,52 @@ pipeline {
 
     post {
         success {
-            echo '''
-                ┌─────────────────────────────────────────────────────────┐
-                │     ✅  NQOBILEQ DEPLOYMENT SUCCESSFUL!  ✅             │
-                ├─────────────────────────────────────────────────────────┤
-                │                                                         │
-                │  📍 Application is running on Jenkins Master!           │
-                │                                                         │
-                │  🔐 Login Credentials:                                  │
-                │     Admin Email:   admin@nqobileq.com                   │
-                │     Admin Password: admin123                            │
-                │                                                         │
-                │  📍 Access URLs:                                        │
-                │     Website:      http://13.205.187.75                  │
-                │     Admin Panel:  http://13.205.187.75/admin/           │
-                │     phpMyAdmin:   http://13.205.187.75:8081             │
-                │                                                         │
-                └─────────────────────────────────────────────────────────┘
-            '''
+            echo '🎉 NQOBILEQ DEPLOYMENT COMPLETED SUCCESSFULLY! 🎉'
+            
+            // Optional: Send email notification
+            emailext(
+                subject: "✅ NqobileQ Build Successful - Build #${env.BUILD_NUMBER}",
+                body: """
+                    NqobileQ has been successfully deployed!
+                    
+                    Build Information:
+                    - Build Number: ${env.BUILD_NUMBER}
+                    - Build URL: ${env.BUILD_URL}
+                    
+                    Access the application at:
+                    http://13.205.187.75
+                    
+                    Admin Login: admin@nqobileq.com / admin123
+                """,
+                to: 'thabani070801@gmail.com'
+            )
         }
         
         failure {
-            echo '❌ DEPLOYMENT FAILED! Check logs above.'
-            sh 'docker-compose -f ${COMPOSE_FILE} logs --tail=50'
+            echo '❌ DEPLOYMENT FAILED! Check the logs above.'
+            
+            // Show error logs
+            sh '''
+                echo "=== Docker Compose Logs ==="
+                docker-compose -f ${COMPOSE_FILE} logs --tail=50
+                
+                echo "=== Web Container Logs ==="
+                docker logs nqobileq_web --tail=30 2>/dev/null || echo "Web container not running"
+                
+                echo "=== Database Container Logs ==="
+                docker logs nqobileq_db --tail=30 2>/dev/null || echo "Database container not running"
+            '''
+            
+            // Optional: Send failure notification
+            emailext(
+                subject: "❌ NqobileQ Build Failed - Build #${env.BUILD_NUMBER}",
+                body: "The build has failed. Check Jenkins console for details: ${env.BUILD_URL}",
+                to: 'thabani070801@gmail.com'
+            )
         }
         
         always {
-            echo '🧹 Pipeline execution completed.'
+            echo '🧹 Cleaning up old Docker resources...'
             sh 'docker image prune -f || true'
             sh 'docker system prune -f || true'
         }
