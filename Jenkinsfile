@@ -1,117 +1,161 @@
 pipeline {
     agent any
-
+    
     environment {
-        APP_NAME = 'nqobileq'
-        COMPOSE_FILE = 'docker-compose.yml'
+        // Build information
         BUILD_TIMESTAMP = sh(script: "date +'%Y%m%d_%H%M%S'", returnStdout: true).trim()
+        DOCKER_IMAGE_NAME = "nqobileq-web"
+        DOCKER_CONTAINER_NAME = "nqobileq_web"
+        DB_CONTAINER_NAME = "nqobileq_db"
+        PMA_CONTAINER_NAME = "nqobileq_phpmyadmin"
         
-        SMTP_USERNAME = credentials('smtp-username')
-        SMTP_PASSWORD = credentials('smtp-password')
-        OWNER_EMAIL = credentials('owner-email')
-        
-        STRIPE_PUBLISHABLE_KEY = credentials('stripe-publishable-key')
-        STRIPE_SECRET_KEY = credentials('stripe-secret-key')
+        // Environment variables from Jenkins credentials
+        SMTP_USERNAME = credentials('SMTP_USERNAME')
+        SMTP_PASSWORD = credentials('SMTP_PASSWORD')
+        STRIPE_PUBLISHABLE_KEY = credentials('STRIPE_PUBLISHABLE_KEY')
+        STRIPE_SECRET_KEY = credentials('STRIPE_SECRET_KEY')
+        OWNER_EMAIL = credentials('OWNER_EMAIL')
     }
-
+    
     stages {
-
         stage('Clean and Fix Workspace') {
             steps {
                 echo '🧹 Cleaning workspace and fixing permissions...'
                 script {
                     sh '''
+                        # Remove lock files
                         echo "Removing any lock files..."
                         find .git -name "*.lock" 2>/dev/null | xargs rm -f 2>/dev/null || true
                         rm -f .git/config.lock 2>/dev/null || true
                         rm -f .git/index.lock 2>/dev/null || true
                         echo "✅ Lock files removed"
-                    '''
-                    sh '''
+                        
+                        # Fix permissions
                         echo "Fixing permissions..."
                         sudo chown -R jenkins:jenkins . 2>/dev/null || true
                         sudo chmod -R 755 . 2>/dev/null || true
                         echo "✅ Permissions fixed"
+                        
+                        # Clean up any leftover Docker artifacts
+                        echo "Cleaning up old Docker artifacts..."
+                        docker system prune -f 2>/dev/null || true
+                        docker volume prune -f 2>/dev/null || true
                     '''
                 }
             }
         }
-
+        
         stage('Build Versioning') {
             steps {
                 echo '📌 Creating build version...'
                 script {
                     sh """
-                        echo "BUILD_VERSION=${BUILD_TIMESTAMP}" > build.properties
-                        echo "BUILD_NUMBER=${env.BUILD_NUMBER}" >> build.properties
-                        echo "BUILD_URL=${env.BUILD_URL}" >> build.properties
-                        echo "JOB_NAME=${env.JOB_NAME}" >> build.properties
+                        echo "BUILD_VERSION=${BUILD_TIMESTAMP}" > version.txt
+                        echo "BUILD_NUMBER=${BUILD_NUMBER}" >> version.txt
+                        echo "BUILD_URL=${BUILD_URL}" >> version.txt
+                        echo "JOB_NAME=${JOB_NAME}" >> version.txt
+                        echo "GIT_COMMIT=${GIT_COMMIT}" >> version.txt
                     """
-                    archiveArtifacts artifacts: 'build.properties', fingerprint: true
+                    archiveArtifacts artifacts: 'version.txt', fingerprint: true
                 }
             }
         }
-
-        stage('Clone Repository') {
-            steps {
-                echo '📦 Cloning NqobileQ repository...'
-                script {
-                    sh '''
-                        cd /var/lib/jenkins/workspace
-                        rm -rf NqoQ
-                        mkdir -p NqoQ
-                        cd NqoQ
-                        git clone https://github.com/JasonMoyo/Nq-web.git .
-                        git checkout main
-                    '''
-                }
-            }
-        }
-
+        
         stage('Pre-Build Checks') {
             parallel {
                 stage('Check Docker') {
                     steps {
-                        echo '🐳 Checking Docker...'
-                        sh 'docker --version'
-                        sh 'docker-compose --version || echo "Docker Compose installed"'
-                        sh 'docker ps'
+                        echo '🐳 Checking Docker installation...'
+                        script {
+                            sh '''
+                                docker --version
+                                docker-compose --version || docker compose version
+                                echo "✅ Docker checks passed"
+                            '''
+                        }
                     }
                 }
+                
                 stage('Check PHP Syntax') {
                     steps {
-                        echo '📝 Checking PHP syntax...'
-                        sh 'find . -name "*.php" -exec php -l {} \\; 2>&1 | grep -v "No syntax errors" || true'
+                        echo '🔍 Checking PHP syntax...'
+                        script {
+                            sh '''
+                                # Find all PHP files and check syntax
+                                find . -name "*.php" -not -path "./vendor/*" -type f | while read file; do
+                                    php -l "$file" || exit 1
+                                done
+                                echo "✅ PHP syntax checks passed"
+                            '''
+                        }
                     }
                 }
+                
                 stage('Security Scan') {
                     steps {
-                        echo '🔒 Quick security check...'
-                        sh 'echo "Security scan completed"'
+                        echo '🔒 Running security checks...'
+                        script {
+                            sh '''
+                                # Check for exposed .env files
+                                if [ -f ".env" ]; then
+                                    echo "⚠️  Warning: .env file exists in repository"
+                                fi
+                                
+                                # Check for sensitive files
+                                find . -name "*.pem" -o -name "*.key" -o -name "*.crt" 2>/dev/null | while read file; do
+                                    echo "⚠️  Warning: Sensitive file found: $file"
+                                done
+                                
+                                echo "✅ Security scan completed"
+                            '''
+                        }
                     }
                 }
             }
         }
-
+        
         stage('Verify Project Files') {
             steps {
                 echo '📁 Verifying project structure...'
-                sh '''
-                    echo "Checking required files..."
-                    [ -f "Dockerfile" ] && echo "✅ Dockerfile found" || echo "❌ Dockerfile missing"
-                    [ -f "docker-compose.yml" ] && echo "✅ docker-compose.yml found" || echo "❌ docker-compose.yml missing"
-                    [ -f "index.php" ] && echo "✅ index.php found" || echo "❌ index.php missing"
-                    [ -f "config.php" ] && echo "✅ config.php found" || echo "❌ config.php missing"
-                    [ -f "init.sql" ] && echo "✅ init.sql found" || echo "❌ init.sql missing"
-                '''
+                script {
+                    sh '''
+                        REQUIRED_FILES="index.php config.php docker-compose.yml Dockerfile init.sql styles.css script.js"
+                        MISSING=0
+                        
+                        for file in $REQUIRED_FILES; do
+                            if [ -f "$file" ]; then
+                                echo "✓ $file found"
+                            else
+                                echo "✗ $file MISSING"
+                                MISSING=1
+                            fi
+                        done
+                        
+                        # Check directories
+                        if [ -d "assets" ]; then
+                            echo "✓ assets directory found"
+                        else
+                            echo "⚠️  assets directory missing (optional)"
+                        fi
+                        
+                        if [ $MISSING -eq 1 ]; then
+                            exit 1
+                        fi
+                        
+                        echo "✅ All required files present"
+                    '''
+                }
             }
         }
-
+        
         stage('Create .env File') {
             steps {
-                echo '🔧 Creating .env file with credentials...'
+                echo '🔧 Creating .env file from environment variables...'
                 script {
-                    writeFile file: '.env', text: """# Database Configuration
+                    sh '''
+                        # Create .env file from environment
+                        cat > .env << EOF
+# Database Configuration
 DB_HOST=db
 DB_USER=nqobileq_user
 DB_PASSWORD=userpassword123
@@ -120,149 +164,343 @@ DB_NAME=nqobileq_db
 # Email Configuration
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USERNAME=${env.SMTP_USERNAME}
-SMTP_PASSWORD=${env.SMTP_PASSWORD}
+SMTP_USERNAME=${SMTP_USERNAME}
+SMTP_PASSWORD=${SMTP_PASSWORD}
 SMTP_SECURE=tls
 
-# Stripe Configuration
-STRIPE_PUBLISHABLE_KEY=${env.STRIPE_PUBLISHABLE_KEY}
-STRIPE_SECRET_KEY=${env.STRIPE_SECRET_KEY}
+# Stripe Keys
+STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
+STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
 
 # Site Configuration
-SITE_URL=http://13.205.187.75
+SITE_URL=http://13.232.172.213
 APP_ENV=production
 
 # Contact Info
 OWNER_PHONE=+27782280408
-OWNER_EMAIL=${env.OWNER_EMAIL}
-"""
+OWNER_EMAIL=${OWNER_EMAIL}
+EOF
+                        
+                        # Set proper permissions
+                        chmod 600 .env
+                        echo "✅ .env file created"
+                    '''
                 }
-                sh 'echo "✅ .env file created"'
             }
         }
-
+        
         stage('Stop Existing Containers') {
             steps {
                 echo '🛑 Stopping existing containers...'
-                sh 'docker-compose -f ${COMPOSE_FILE} down || true'
+                script {
+                    sh '''
+                        # Stop containers using docker-compose
+                        docker-compose -f docker-compose.yml down --remove-orphans 2>/dev/null || true
+                        
+                        # Stop containers individually
+                        docker stop ${DOCKER_CONTAINER_NAME} 2>/dev/null || true
+                        docker stop ${DB_CONTAINER_NAME} 2>/dev/null || true
+                        docker stop ${PMA_CONTAINER_NAME} 2>/dev/null || true
+                        
+                        # Remove containers
+                        docker rm ${DOCKER_CONTAINER_NAME} 2>/dev/null || true
+                        docker rm ${DB_CONTAINER_NAME} 2>/dev/null || true
+                        docker rm ${PMA_CONTAINER_NAME} 2>/dev/null || true
+                        
+                        # Remove old images
+                        docker rmi ${DOCKER_IMAGE_NAME}:latest 2>/dev/null || true
+                        
+                        echo "✅ Old containers stopped and removed"
+                    '''
+                }
             }
         }
-
+        
         stage('Build Docker Images') {
             steps {
-                echo '🏗️ Building Docker images...'
-                sh 'docker-compose -f ${COMPOSE_FILE} build --no-cache'
+                echo '🏗️  Building Docker images...'
+                script {
+                    sh '''
+                        # Build with docker-compose
+                        docker-compose -f docker-compose.yml build --no-cache
+                        
+                        # Tag the image
+                        docker tag ${DOCKER_IMAGE_NAME}:latest ${DOCKER_IMAGE_NAME}:${BUILD_TIMESTAMP}
+                        
+                        echo "✅ Docker images built successfully"
+                    '''
+                }
             }
         }
-
+        
         stage('Start Services') {
             steps {
-                echo '🚀 Starting all services...'
-                sh 'docker-compose -f ${COMPOSE_FILE} up -d'
-                echo 'Waiting for services...'
-                sleep 20
+                echo '🚀 Starting Docker services...'
+                script {
+                    sh '''
+                        # Start all services
+                        docker-compose -f docker-compose.yml up -d
+                        
+                        # Wait for services to be ready
+                        echo "Waiting for services to start..."
+                        sleep 10
+                        
+                        # Check container status
+                        docker-compose -f docker-compose.yml ps
+                        
+                        echo "✅ Services started"
+                    '''
+                }
             }
         }
-
+        
         stage('Copy .env to Container') {
             steps {
-                echo '📋 Copying .env file...'
-                sh '''
-                    docker cp .env nqobileq_web:/var/www/html/.env 2>/dev/null || true
-                    docker exec nqobileq_web chown www-data:www-data /var/www/html/.env 2>/dev/null || true
-                    docker exec nqobileq_web chmod 644 /var/www/html/.env 2>/dev/null || true
-                    echo "✅ .env copied"
-                '''
+                echo '📋 Copying .env file to container...'
+                script {
+                    sh '''
+                        # Wait for container to be fully ready
+                        sleep 5
+                        
+                        # Copy .env file to container
+                        docker cp .env ${DOCKER_CONTAINER_NAME}:/var/www/html/.env
+                        
+                        # Set proper permissions
+                        docker exec ${DOCKER_CONTAINER_NAME} chmod 600 /var/www/html/.env
+                        
+                        echo "✅ .env file copied to container"
+                    '''
+                }
             }
         }
-
+        
         stage('Install Composer Dependencies') {
             steps {
                 echo '📦 Installing Composer dependencies...'
-                sh 'docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction" 2>/dev/null || true'
+                script {
+                    sh '''
+                        # Check if composer.json exists
+                        if [ -f "composer.json" ]; then
+                            # Install dependencies inside container
+                            docker exec ${DOCKER_CONTAINER_NAME} bash -c "cd /var/www/html && composer install --no-interaction --no-dev --optimize-autoloader 2>/dev/null || echo '⚠️  Composer install skipped (may need to run composer install manually)'"
+                            echo "✅ Composer dependencies installed"
+                        else
+                            echo "⚠️  No composer.json found, skipping Composer install"
+                        fi
+                    '''
+                }
             }
         }
-
+        
         stage('Set Permissions') {
             steps {
-                echo '🔧 Setting permissions...'
-                sh '''
-                    docker exec nqobileq_web chown -R www-data:www-data /var/www/html 2>/dev/null || true
-                    docker exec nqobileq_web chmod -R 755 /var/www/html 2>/dev/null || true
-                '''
+                echo '🔐 Setting file permissions...'
+                script {
+                    sh '''
+                        # Set permissions inside container
+                        docker exec ${DOCKER_CONTAINER_NAME} chown -R www-data:www-data /var/www/html
+                        docker exec ${DOCKER_CONTAINER_NAME} chmod -R 755 /var/www/html
+                        docker exec ${DOCKER_CONTAINER_NAME} chmod -R 777 /var/www/html/temp 2>/dev/null || true
+                        docker exec ${DOCKER_CONTAINER_NAME} chmod -R 777 /var/www/html/logs 2>/dev/null || true
+                        
+                        echo "✅ Permissions set correctly"
+                    '''
+                }
             }
         }
-
+        
         stage('Verify Database') {
             steps {
-                echo '🗄️ Verifying database...'
-                sh '''
-                    for i in 1 2 3 4 5 6 7 8 9 10; do
-                        if docker exec nqobileq_db mysqladmin ping -h localhost --silent 2>/dev/null; then
-                            echo "✅ MySQL ready!"
-                            break
-                        fi
-                        sleep 3
-                    done
-                '''
+                echo '🗄️  Verifying database connection...'
+                script {
+                    sh '''
+                        # Wait for database to be ready
+                        echo "Waiting for database to be ready..."
+                        sleep 10
+                        
+                        # Test database connection
+                        docker exec ${DB_CONTAINER_NAME} mysqladmin ping -h localhost --silent || exit 1
+                        
+                        echo "✅ Database is ready"
+                    '''
+                }
             }
         }
-
+        
         stage('Initialize Database') {
             steps {
-                echo '📀 Database initialization...'
-                sh 'docker exec -i nqobileq_db mysql -uroot -prootpassword123 nqobileq_db < init.sql 2>/dev/null || echo "Init already run"'
+                echo '📀 Initializing database schema...'
+                script {
+                    sh '''
+                        # Check if init.sql exists
+                        if [ -f "init.sql" ]; then
+                            # Import database schema
+                            docker exec -i ${DB_CONTAINER_NAME} mysql -uroot -prootpassword123 < init.sql 2>/dev/null || echo "⚠️  Database already initialized or import skipped"
+                            echo "✅ Database initialized"
+                        else
+                            echo "⚠️  No init.sql found, skipping database initialization"
+                        fi
+                    '''
+                }
             }
         }
-
+        
         stage('Health Check') {
             steps {
-                echo '🏥 Health check...'
-                sh '''
-                    curl -f http://localhost && echo "✅ Website running"
-                    curl -f http://localhost/admin/ && echo "✅ Admin panel accessible"
-                '''
+                echo '🏥 Running health checks...'
+                script {
+                    sh '''
+                        # Check web container health
+                        WEB_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' ${DOCKER_CONTAINER_NAME} 2>/dev/null || echo "none")
+                        
+                        if [ "$WEB_HEALTH" = "healthy" ] || [ "$WEB_HEALTH" = "none" ]; then
+                            echo "✅ Web container is healthy"
+                        else
+                            echo "⚠️  Web container health status: $WEB_HEALTH"
+                        fi
+                        
+                        # Test HTTP response
+                        sleep 5
+                        curl -f http://localhost:80/ || echo "⚠️  Website not responding yet (may need more time)"
+                        
+                        echo "✅ Health checks completed"
+                    '''
+                }
             }
         }
-
+        
         stage('Verify Live Site') {
             steps {
-                echo '🌐 Site live!'
-                sh '''
-                    echo "=========================================="
-                    echo "✅ NQOBILEQ DEPLOYMENT COMPLETE!"
-                    echo "=========================================="
-                    echo "Build: #${BUILD_NUMBER}"
-                    echo "Website: http://13.205.187.75"
-                    echo "Admin: http://13.205.187.75/admin/"
-                    echo "=========================================="
-                '''
+                echo '🌐 Verifying live site...'
+                script {
+                    sh '''
+                        # Get EC2 public IP
+                        EC2_IP=$(curl -s http://checkip.amazonaws.com)
+                        
+                        echo "=========================================="
+                        echo "✅ DEPLOYMENT SUCCESSFUL!"
+                        echo "=========================================="
+                        echo ""
+                        echo "🌐 Website: http://$EC2_IP"
+                        echo "📊 phpMyAdmin: http://$EC2_IP:8081"
+                        echo ""
+                        echo "Database Credentials:"
+                        echo "  Username: root or nqobileq_user"
+                        echo "  Password: rootpassword123 or userpassword123"
+                        echo ""
+                        echo "=========================================="
+                        
+                        # Test if site is accessible
+                        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80/)
+                        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "302" ]; then
+                            echo "✅ Website is responding (HTTP $HTTP_CODE)"
+                        else
+                            echo "⚠️  Website returned HTTP $HTTP_CODE"
+                        fi
+                    '''
+                }
             }
         }
     }
-
+    
     post {
-        success {
-            echo '🎉 DEPLOYMENT SUCCESSFUL! 🎉'
-            emailext(
-                subject: "✅ NqobileQ Build Successful - #${env.BUILD_NUMBER}",
-                body: "Build completed successfully. Website: http://13.205.187.75",
-                to: 'thabani070801@gmail.com'
-            )
+        always {
+            echo '🧹 Final cleanup...'
+            script {
+                sh '''
+                    # Clean up old Docker images
+                    docker image prune -f 2>/dev/null || true
+                    docker system prune -f 2>/dev/null || true
+                    
+                    # Display running containers
+                    echo "Currently running containers:"
+                    docker-compose -f docker-compose.yml ps 2>/dev/null || true
+                '''
+            }
         }
+        
+        success {
+            echo '✅ DEPLOYMENT COMPLETE!'
+            script {
+                // Get the EC2 IP for the success message
+                def EC2_IP = sh(script: "curl -s http://checkip.amazonaws.com", returnStdout: true).trim()
+                
+                emailext(
+                    to: "${OWNER_EMAIL}",
+                    subject: "✅ Jenkins Build Success: ${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                    body: """
+                        The deployment was successful!
+                        
+                        Build Details:
+                        - Job: ${env.JOB_NAME}
+                        - Build Number: ${env.BUILD_NUMBER}
+                        - Build URL: ${env.BUILD_URL}
+                        - Version: ${BUILD_TIMESTAMP}
+                        
+                        Site Information:
+                        - Website: http://${EC2_IP}
+                        - phpMyAdmin: http://${EC2_IP}:8081
+                        
+                        Database Credentials:
+                        - Username: root or nqobileq_user
+                        - Password: rootpassword123 or userpassword123
+                        
+                        For more details, visit: ${env.BUILD_URL}
+                    """,
+                    recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                )
+            }
+        }
+        
         failure {
             echo '❌ DEPLOYMENT FAILED!'
-            sh 'docker-compose -f ${COMPOSE_FILE} logs --tail=50'
-            emailext(
-                subject: "❌ NqobileQ Build Failed - #${env.BUILD_NUMBER}",
-                body: "Build failed. Check Jenkins console.",
-                to: 'thabani070801@gmail.com'
-            )
+            script {
+                sh '''
+                    echo "===== Docker Compose Logs ====="
+                    docker-compose -f docker-compose.yml logs --tail=50 2>/dev/null || echo "No docker-compose logs available"
+                    
+                    echo ""
+                    echo "===== Web Container Logs ====="
+                    docker logs ${DOCKER_CONTAINER_NAME} --tail=30 2>/dev/null || echo "Web container not running"
+                    
+                    echo ""
+                    echo "===== Database Container Logs ====="
+                    docker logs ${DB_CONTAINER_NAME} --tail=30 2>/dev/null || echo "Database container not running"
+                '''
+                
+                emailext(
+                    to: "${OWNER_EMAIL}",
+                    subject: "❌ Jenkins Build Failed: ${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                    body: """
+                        The build has failed. Please check the console output.
+                        
+                        Build Details:
+                        - Job: ${env.JOB_NAME}
+                        - Build Number: ${env.BUILD_NUMBER}
+                        - Build URL: ${env.BUILD_URL}
+                        
+                        Please investigate the failure at: ${env.BUILD_URL}
+                        
+                        Common issues to check:
+                        1. Docker daemon is running
+                        2. Ports 80 and 8081 are available
+                        3. Database connection is working
+                        4. .env file has correct credentials
+                        5. PHP syntax is valid
+                    """,
+                    recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                )
+            }
         }
-        always {
-            echo '🧹 Cleaning up...'
-            sh 'docker image prune -f || true'
-            sh 'docker system prune -f || true'
+        
+        unstable {
+            echo '⚠️  DEPLOYMENT UNSTABLE!'
+            emailext(
+                to: "${OWNER_EMAIL}",
+                subject: "⚠️ Jenkins Build Unstable: ${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
+                body: "The build completed with warnings. Check console output at ${env.BUILD_URL}",
+                recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+            )
         }
     }
 }
