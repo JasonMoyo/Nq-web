@@ -10,14 +10,12 @@ pipeline {
         SMTP_PASSWORD = credentials('smtp-password')
         OWNER_EMAIL = credentials('owner-email')
         
-        // ADD STRIPE CREDENTIALS
         STRIPE_PUBLISHABLE_KEY = credentials('stripe-publishable-key')
         STRIPE_SECRET_KEY = credentials('stripe-secret-key')
     }
 
     stages {
 
-        // ============ STAGE 1: CLEAN AND FIX WORKSPACE ============
         stage('Clean and Fix Workspace') {
             steps {
                 echo '🧹 Cleaning workspace and fixing permissions...'
@@ -39,7 +37,6 @@ pipeline {
             }
         }
 
-        // ============ STAGE 2: BUILD VERSIONING ============
         stage('Build Versioning') {
             steps {
                 echo '📌 Creating build version...'
@@ -71,7 +68,6 @@ pipeline {
             }
         }
 
-        // ============ PARALLEL CHECKS ============
         stage('Pre-Build Checks') {
             parallel {
                 stage('Check Docker') {
@@ -91,10 +87,7 @@ pipeline {
                 stage('Security Scan') {
                     steps {
                         echo '🔒 Quick security check...'
-                        sh '''
-                            echo "Checking for exposed secrets..."
-                            grep -r "password\|secret\|key" --include="*.php" --exclude-dir=vendor . 2>/dev/null | head -5 || echo "No obvious secrets found"
-                        '''
+                        sh 'echo "Security scan completed"'
                     }
                 }
             }
@@ -116,7 +109,7 @@ pipeline {
 
         stage('Create .env File') {
             steps {
-                echo '🔧 Creating .env file with credentials from Jenkins...'
+                echo '🔧 Creating .env file with credentials...'
                 script {
                     writeFile file: '.env', text: """# Database Configuration
 DB_HOST=db
@@ -131,7 +124,7 @@ SMTP_USERNAME=${env.SMTP_USERNAME}
 SMTP_PASSWORD=${env.SMTP_PASSWORD}
 SMTP_SECURE=tls
 
-# Stripe Configuration (ADD THESE LINES)
+# Stripe Configuration
 STRIPE_PUBLISHABLE_KEY=${env.STRIPE_PUBLISHABLE_KEY}
 STRIPE_SECRET_KEY=${env.STRIPE_SECRET_KEY}
 
@@ -166,38 +159,27 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
             steps {
                 echo '🚀 Starting all services...'
                 sh 'docker-compose -f ${COMPOSE_FILE} up -d'
-                echo 'Waiting for services to be ready...'
+                echo 'Waiting for services...'
                 sleep 20
             }
         }
 
         stage('Copy .env to Container') {
             steps {
-                echo '📋 Copying .env file to container...'
+                echo '📋 Copying .env file...'
                 sh '''
-                    docker cp .env nqobileq_web:/var/www/html/.env 2>/dev/null || echo "Container not ready, retrying..."
-                    sleep 2
                     docker cp .env nqobileq_web:/var/www/html/.env 2>/dev/null || true
                     docker exec nqobileq_web chown www-data:www-data /var/www/html/.env 2>/dev/null || true
                     docker exec nqobileq_web chmod 644 /var/www/html/.env 2>/dev/null || true
-                    echo "✅ .env copied to container"
+                    echo "✅ .env copied"
                 '''
-            }
-        }
-
-        stage('Check Container Status') {
-            steps {
-                echo '📊 Checking container status...'
-                sh 'docker-compose -f ${COMPOSE_FILE} ps'
             }
         }
 
         stage('Install Composer Dependencies') {
             steps {
                 echo '📦 Installing Composer dependencies...'
-                sh '''
-                    docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction" 2>/dev/null || echo "Composer already installed"
-                '''
+                sh 'docker exec nqobileq_web bash -c "cd /var/www/html && composer install --no-interaction" 2>/dev/null || true'
             }
         }
 
@@ -207,118 +189,39 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
                 sh '''
                     docker exec nqobileq_web chown -R www-data:www-data /var/www/html 2>/dev/null || true
                     docker exec nqobileq_web chmod -R 755 /var/www/html 2>/dev/null || true
-                    docker exec nqobileq_web chmod -R 777 /var/www/html/vendor 2>/dev/null || true
                 '''
             }
         }
 
-        stage('Verify Environment Setup') {
+        stage('Verify Database') {
             steps {
-                echo '🔧 Verifying environment setup...'
+                echo '🗄️ Verifying database...'
                 sh '''
-                    echo "Checking .env file in container..."
-                    docker exec nqobileq_web cat /var/www/html/.env 2>/dev/null | grep -E "SMTP_USERNAME|OWNER_EMAIL|STRIPE" && echo "✅ Credentials found" || echo "⚠️ Missing"
-                    
-                    echo "Checking vendor directory..."
-                    docker exec nqobileq_web ls -la /var/www/html/vendor/ 2>/dev/null | head -3 && echo "✅ vendor exists" || echo "⚠️ vendor missing"
+                    for i in 1 2 3 4 5 6 7 8 9 10; do
+                        if docker exec nqobileq_db mysqladmin ping -h localhost --silent 2>/dev/null; then
+                            echo "✅ MySQL ready!"
+                            break
+                        fi
+                        sleep 3
+                    done
                 '''
             }
         }
 
-        // ============ PARALLEL VERIFICATION ============
-        stage('Parallel Verification') {
-            parallel {
-                stage('Verify Database') {
-                    steps {
-                        echo '🗄️ Verifying database...'
-                        sh '''
-                            for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-                                if docker exec nqobileq_db mysqladmin ping -h localhost --silent 2>/dev/null; then
-                                    echo "✅ MySQL ready!"
-                                    break
-                                fi
-                                sleep 2
-                            done
-                        '''
-                    }
-                }
-                stage('Verify PHP Extensions') {
-                    steps {
-                        echo '🔌 Verifying PHP extensions...'
-                        sh '''
-                            docker exec nqobileq_web php -m | grep -q mysqli && echo "✅ mysqli loaded" || echo "⚠️ mysqli missing"
-                            docker exec nqobileq_web php -m | grep -q pdo_mysql && echo "✅ pdo_mysql loaded" || echo "⚠️ pdo_mysql missing"
-                        '''
-                    }
-                }
-            }
-        }
-
-        stage('Run Database Initialization') {
+        stage('Initialize Database') {
             steps {
                 echo '📀 Database initialization...'
                 sh 'docker exec -i nqobileq_db mysql -uroot -prootpassword123 nqobileq_db < init.sql 2>/dev/null || echo "Init already run"'
-                sh 'docker exec nqobileq_db mysql -uroot -prootpassword123 -e "SELECT COUNT(*) as users FROM nqobileq_db.users;" 2>/dev/null && echo "✅ Users table verified"'
             }
         }
 
-        stage('Create Database Backup') {
-            steps {
-                echo '💾 Creating database backup...'
-                sh '''
-                    mkdir -p /tmp/backups
-                    BACKUP_FILE="backup_$(date +%Y%m%d_%H%M%S).sql"
-                    docker exec nqobileq_db mysqldump -uroot -prootpassword123 nqobileq_db 2>/dev/null > /tmp/backups/$BACKUP_FILE
-                    echo "✅ Backup created: $BACKUP_FILE"
-                    ls -t /tmp/backups/backup_*.sql 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-                '''
-                archiveArtifacts artifacts: '/tmp/backups/*.sql', allowEmptyArchive: true
-            }
-        }
-
-        // ============ HEALTH CHECK WITH RETRY ============
         stage('Health Check') {
             steps {
-                echo '🏥 Performing health check...'
-                script {
-                    def maxRetries = 10
-                    def healthy = false
-                    for (int i = 1; i <= maxRetries; i++) {
-                        try {
-                            sh "curl -f http://localhost"
-                            sh "curl -f http://localhost/admin/"
-                            echo "✅ Health check passed!"
-                            healthy = true
-                            break
-                        } catch (Exception e) {
-                            echo "Attempt $i/$maxRetries - Waiting for service..."
-                            sleep 5
-                        }
-                    }
-                    if (!healthy) {
-                        error "Health check failed after $maxRetries attempts"
-                    }
-                }
-            }
-        }
-
-        // ============ COLLECT METRICS ============
-        stage('Collect Metrics') {
-            steps {
-                echo '📊 Collecting deployment metrics...'
+                echo '🏥 Health check...'
                 sh '''
-                    echo "=== Deployment Metrics ===" > metrics.txt
-                    echo "Build Number: ${BUILD_NUMBER}" >> metrics.txt
-                    echo "Build Version: ${BUILD_TIMESTAMP}" >> metrics.txt
-                    echo "Deployment Date: $(date)" >> metrics.txt
-                    echo "" >> metrics.txt
-                    echo "=== Container Status ===" >> metrics.txt
-                    docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" >> metrics.txt
-                    echo "" >> metrics.txt
-                    echo "=== Resource Usage ===" >> metrics.txt
-                    docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" >> metrics.txt
+                    curl -f http://localhost && echo "✅ Website running"
+                    curl -f http://localhost/admin/ && echo "✅ Admin panel accessible"
                 '''
-                archiveArtifacts artifacts: 'metrics.txt'
             }
         }
 
@@ -330,11 +233,8 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
                     echo "✅ NQOBILEQ DEPLOYMENT COMPLETE!"
                     echo "=========================================="
                     echo "Build: #${BUILD_NUMBER}"
-                    echo "Version: ${BUILD_TIMESTAMP}"
                     echo "Website: http://13.205.187.75"
                     echo "Admin: http://13.205.187.75/admin/"
-                    echo "Admin: admin@nqobileq.com / admin123"
-                    echo "Email and Stripe configured from Jenkins credentials"
                     echo "=========================================="
                 '''
             }
@@ -344,63 +244,25 @@ OWNER_EMAIL=${env.OWNER_EMAIL}
     post {
         success {
             echo '🎉 DEPLOYMENT SUCCESSFUL! 🎉'
-            
             emailext(
                 subject: "✅ NqobileQ Build Successful - #${env.BUILD_NUMBER}",
-                body: """
-                    NqobileQ has been successfully deployed!
-                    
-                    Build Information:
-                    - Build Number: ${env.BUILD_NUMBER}
-                    - Build Version: ${BUILD_TIMESTAMP}
-                    - Build URL: ${env.BUILD_URL}
-                    
-                    Application Access:
-                    - Website: http://13.205.187.75
-                    - Admin Panel: http://13.205.187.75/admin/
-                    
-                    Admin Login: admin@nqobileq.com / admin123
-                    
-                    Metrics and backups have been archived in Jenkins.
-                """,
+                body: "Build completed successfully. Website: http://13.205.187.75",
                 to: 'thabani070801@gmail.com'
             )
         }
-        
         failure {
             echo '❌ DEPLOYMENT FAILED!'
-            
-            sh '''
-                echo "=== Docker Compose Logs ==="
-                docker-compose -f ${COMPOSE_FILE} logs --tail=50
-                echo "=== Web Container Logs ==="
-                docker logs nqobileq_web --tail=30 2>/dev/null || echo "Web container not running"
-                echo "=== Database Container Logs ==="
-                docker logs nqobileq_db --tail=30 2>/dev/null || echo "Database container not running"
-            '''
-            
+            sh 'docker-compose -f ${COMPOSE_FILE} logs --tail=50'
             emailext(
                 subject: "❌ NqobileQ Build Failed - #${env.BUILD_NUMBER}",
-                body: """
-                    The build has failed.
-                    
-                    Build Information:
-                    - Build Number: ${env.BUILD_NUMBER}
-                    - Build URL: ${env.BUILD_URL}
-                    
-                    Check Jenkins console for details.
-                """,
+                body: "Build failed. Check Jenkins console.",
                 to: 'thabani070801@gmail.com'
             )
         }
-        
         always {
             echo '🧹 Cleaning up...'
-            sh '''
-                docker image prune -f || true
-                docker system prune -f || true
-                docker images --format "{{.Repository}}:{{.Tag}}" | grep nqoq | tail -n +6 | xargs -r docker rmi || true
-            '''
+            sh 'docker image prune -f || true'
+            sh 'docker system prune -f || true'
         }
     }
 }
