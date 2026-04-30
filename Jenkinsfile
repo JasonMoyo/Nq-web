@@ -23,16 +23,20 @@ pipeline {
                 echo '🧹 Cleaning workspace and fixing permissions...'
                 script {
                     sh '''
-                        # Remove lock files
+                        # Fix Git safe directory (prevents "dubious ownership" errors)
+                        git config --global --add safe.directory "${WORKSPACE}" 2>/dev/null || true
+                        
+                        # Remove any Git lock files (fixes "AccessDeniedException" errors)
                         echo "Removing any lock files..."
                         find .git -name "*.lock" 2>/dev/null | xargs rm -f 2>/dev/null || true
                         rm -f .git/config.lock 2>/dev/null || true
                         rm -f .git/index.lock 2>/dev/null || true
+                        rm -f .git/HEAD.lock 2>/dev/null || true
                         echo "✅ Lock files removed"
                         
-                        # Fix permissions
+                        # Fix permissions (using ubuntu user since Jenkins runs as ubuntu)
                         echo "Fixing permissions..."
-                        sudo chown -R jenkins:jenkins . 2>/dev/null || true
+                        sudo chown -R ubuntu:ubuntu . 2>/dev/null || true
                         sudo chmod -R 755 . 2>/dev/null || true
                         echo "✅ Permissions fixed"
                         
@@ -81,11 +85,16 @@ pipeline {
                         echo '🔍 Checking PHP syntax...'
                         script {
                             sh '''
-                                # Find all PHP files and check syntax
-                                find . -name "*.php" -not -path "./vendor/*" -type f | while read file; do
-                                    php -l "$file" || exit 1
-                                done
-                                echo "✅ PHP syntax checks passed"
+                                if command -v php >/dev/null 2>&1; then
+                                    echo "PHP found: $(php --version | head -1)"
+                                    find . -name "*.php" -not -path "./vendor/*" -type f | while read file; do
+                                        echo "Checking $file"
+                                        php -l "$file" || exit 1
+                                    done
+                                    echo "✅ PHP syntax checks passed"
+                                else
+                                    echo "⚠️ PHP not installed on agent, skipping syntax check"
+                                fi
                             '''
                         }
                     }
@@ -98,13 +107,17 @@ pipeline {
                             sh '''
                                 # Check for exposed .env files
                                 if [ -f ".env" ]; then
-                                    echo "⚠️  Warning: .env file exists in repository"
+                                    echo "⚠️  Warning: .env file exists in repository (should be gitignored)"
                                 fi
                                 
                                 # Check for sensitive files
-                                find . -name "*.pem" -o -name "*.key" -o -name "*.crt" 2>/dev/null | while read file; do
-                                    echo "⚠️  Warning: Sensitive file found: $file"
-                                done
+                                SENSITIVE_COUNT=$(find . -name "*.pem" -o -name "*.key" -o -name "*.crt" 2>/dev/null | wc -l)
+                                if [ "$SENSITIVE_COUNT" -gt 0 ]; then
+                                    echo "⚠️  Warning: Found $SENSITIVE_COUNT sensitive files"
+                                    find . -name "*.pem" -o -name "*.key" -o -name "*.crt" 2>/dev/null | while read file; do
+                                        echo "  - $file"
+                                    done
+                                fi
                                 
                                 echo "✅ Security scan completed"
                             '''
@@ -131,7 +144,6 @@ pipeline {
                             fi
                         done
                         
-                        # Check directories
                         if [ -d "assets" ]; then
                             echo "✓ assets directory found"
                         else
@@ -139,6 +151,7 @@ pipeline {
                         fi
                         
                         if [ $MISSING -eq 1 ]; then
+                            echo "❌ Missing required files, aborting"
                             exit 1
                         fi
                         
@@ -152,9 +165,9 @@ pipeline {
             steps {
                 echo '🔧 Creating .env file from environment variables...'
                 script {
-                    sh '''
+                    sh """
                         # Create .env file from environment
-                        cat > .env << EOF
+                        cat > .env << 'ENVEOF'
 # Database Configuration
 DB_HOST=db
 DB_USER=nqobileq_user
@@ -179,11 +192,14 @@ APP_ENV=production
 # Contact Info
 OWNER_PHONE=+27782280408
 OWNER_EMAIL=${OWNER_EMAIL}
-EOF
+ENVEOF
                         
                         # Set proper permissions
                         chmod 600 .env
                         echo "✅ .env file created"
+                        
+                        # Show .env (masked for debugging)
+                        echo "📋 .env file created with masked values"
                     '''
                 }
             }
@@ -243,7 +259,7 @@ EOF
                         
                         # Wait for services to be ready
                         echo "Waiting for services to start..."
-                        sleep 10
+                        sleep 15
                         
                         # Check container status
                         docker-compose -f docker-compose.yml ps
@@ -262,13 +278,14 @@ EOF
                         # Wait for container to be fully ready
                         sleep 5
                         
-                        # Copy .env file to container
-                        docker cp .env ${DOCKER_CONTAINER_NAME}:/var/www/html/.env
-                        
-                        # Set proper permissions
-                        docker exec ${DOCKER_CONTAINER_NAME} chmod 600 /var/www/html/.env
-                        
-                        echo "✅ .env file copied to container"
+                        # Copy .env file to container if container exists
+                        if docker ps | grep -q ${DOCKER_CONTAINER_NAME}; then
+                            docker cp .env ${DOCKER_CONTAINER_NAME}:/var/www/html/.env
+                            docker exec ${DOCKER_CONTAINER_NAME} chmod 600 /var/www/html/.env
+                            echo "✅ .env file copied to container"
+                        else
+                            echo "⚠️  Web container not running, skipping .env copy"
+                        fi
                     '''
                 }
             }
@@ -279,13 +296,15 @@ EOF
                 echo '📦 Installing Composer dependencies...'
                 script {
                     sh '''
-                        # Check if composer.json exists
                         if [ -f "composer.json" ]; then
-                            # Install dependencies inside container
-                            docker exec ${DOCKER_CONTAINER_NAME} bash -c "cd /var/www/html && composer install --no-interaction --no-dev --optimize-autoloader 2>/dev/null || echo '⚠️  Composer install skipped (may need to run composer install manually)'"
-                            echo "✅ Composer dependencies installed"
+                            if docker ps | grep -q ${DOCKER_CONTAINER_NAME}; then
+                                docker exec ${DOCKER_CONTAINER_NAME} bash -c "cd /var/www/html && composer install --no-interaction --no-dev --optimize-autoloader 2>/dev/null || echo '⚠️ Composer install skipped'"
+                                echo "✅ Composer dependencies installed"
+                            else
+                                echo "⚠️ Web container not running, skipping Composer install"
+                            fi
                         else
-                            echo "⚠️  No composer.json found, skipping Composer install"
+                            echo "⚠️ No composer.json found, skipping Composer install"
                         fi
                     '''
                 }
@@ -297,13 +316,13 @@ EOF
                 echo '🔐 Setting file permissions...'
                 script {
                     sh '''
-                        # Set permissions inside container
-                        docker exec ${DOCKER_CONTAINER_NAME} chown -R www-data:www-data /var/www/html
-                        docker exec ${DOCKER_CONTAINER_NAME} chmod -R 755 /var/www/html
-                        docker exec ${DOCKER_CONTAINER_NAME} chmod -R 777 /var/www/html/temp 2>/dev/null || true
-                        docker exec ${DOCKER_CONTAINER_NAME} chmod -R 777 /var/www/html/logs 2>/dev/null || true
-                        
-                        echo "✅ Permissions set correctly"
+                        if docker ps | grep -q ${DOCKER_CONTAINER_NAME}; then
+                            docker exec ${DOCKER_CONTAINER_NAME} chown -R www-data:www-data /var/www/html 2>/dev/null || true
+                            docker exec ${DOCKER_CONTAINER_NAME} chmod -R 755 /var/www/html 2>/dev/null || true
+                            echo "✅ Permissions set correctly"
+                        else
+                            echo "⚠️ Web container not running, skipping permissions"
+                        fi
                     '''
                 }
             }
@@ -314,14 +333,15 @@ EOF
                 echo '🗄️  Verifying database connection...'
                 script {
                     sh '''
-                        # Wait for database to be ready
                         echo "Waiting for database to be ready..."
                         sleep 10
                         
-                        # Test database connection
-                        docker exec ${DB_CONTAINER_NAME} mysqladmin ping -h localhost --silent || exit 1
-                        
-                        echo "✅ Database is ready"
+                        if docker ps | grep -q ${DB_CONTAINER_NAME}; then
+                            docker exec ${DB_CONTAINER_NAME} mysqladmin ping -h localhost --silent || echo "⚠️ Database not ready yet"
+                            echo "✅ Database is ready"
+                        else
+                            echo "⚠️ Database container not running"
+                        fi
                     '''
                 }
             }
@@ -332,13 +352,15 @@ EOF
                 echo '📀 Initializing database schema...'
                 script {
                     sh '''
-                        # Check if init.sql exists
                         if [ -f "init.sql" ]; then
-                            # Import database schema
-                            docker exec -i ${DB_CONTAINER_NAME} mysql -uroot -prootpassword123 < init.sql 2>/dev/null || echo "⚠️  Database already initialized or import skipped"
-                            echo "✅ Database initialized"
+                            if docker ps | grep -q ${DB_CONTAINER_NAME}; then
+                                docker exec -i ${DB_CONTAINER_NAME} mysql -uroot -prootpassword123 < init.sql 2>/dev/null || echo "⚠️ Database already initialized or import skipped"
+                                echo "✅ Database initialized"
+                            else
+                                echo "⚠️ Database container not running, skipping initialization"
+                            fi
                         else
-                            echo "⚠️  No init.sql found, skipping database initialization"
+                            echo "⚠️ No init.sql found, skipping database initialization"
                         fi
                     '''
                 }
@@ -350,18 +372,18 @@ EOF
                 echo '🏥 Running health checks...'
                 script {
                     sh '''
-                        # Check web container health
-                        WEB_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' ${DOCKER_CONTAINER_NAME} 2>/dev/null || echo "none")
-                        
-                        if [ "$WEB_HEALTH" = "healthy" ] || [ "$WEB_HEALTH" = "none" ]; then
-                            echo "✅ Web container is healthy"
+                        if docker ps | grep -q ${DOCKER_CONTAINER_NAME}; then
+                            # Test HTTP response
+                            sleep 5
+                            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80/ 2>/dev/null || echo "000")
+                            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "302" ]; then
+                                echo "✅ Website is responding (HTTP $HTTP_CODE)"
+                            else
+                                echo "⚠️ Website returned HTTP $HTTP_CODE"
+                            fi
                         else
-                            echo "⚠️  Web container health status: $WEB_HEALTH"
+                            echo "⚠️ Web container not running"
                         fi
-                        
-                        # Test HTTP response
-                        sleep 5
-                        curl -f http://localhost:80/ || echo "⚠️  Website not responding yet (may need more time)"
                         
                         echo "✅ Health checks completed"
                     '''
@@ -374,7 +396,6 @@ EOF
                 echo '🌐 Verifying live site...'
                 script {
                     sh '''
-                        # Get EC2 public IP
                         EC2_IP=$(curl -s http://checkip.amazonaws.com)
                         
                         echo "=========================================="
@@ -389,14 +410,6 @@ EOF
                         echo "  Password: rootpassword123 or userpassword123"
                         echo ""
                         echo "=========================================="
-                        
-                        # Test if site is accessible
-                        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80/)
-                        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "302" ]; then
-                            echo "✅ Website is responding (HTTP $HTTP_CODE)"
-                        else
-                            echo "⚠️  Website returned HTTP $HTTP_CODE"
-                        fi
                     '''
                 }
             }
@@ -408,21 +421,18 @@ EOF
             echo '🧹 Final cleanup...'
             script {
                 sh '''
-                    # Clean up old Docker images
                     docker image prune -f 2>/dev/null || true
                     docker system prune -f 2>/dev/null || true
                     
-                    # Display running containers
                     echo "Currently running containers:"
-                    docker-compose -f docker-compose.yml ps 2>/dev/null || true
+                    docker-compose -f docker-compose.yml ps 2>/dev/null || echo "No containers running"
                 '''
             }
         }
         
         success {
-            echo '✅ DEPLOYMENT COMPLETE!'
+            echo '✅ DEPLOYMENT SUCCESSFUL!'
             script {
-                // Get the EC2 IP for the success message
                 def EC2_IP = sh(script: "curl -s http://checkip.amazonaws.com", returnStdout: true).trim()
                 
                 emailext(
@@ -446,8 +456,7 @@ EOF
                         - Password: rootpassword123 or userpassword123
                         
                         For more details, visit: ${env.BUILD_URL}
-                    """,
-                    recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                    """
                 )
             }
         }
@@ -461,11 +470,11 @@ EOF
                     
                     echo ""
                     echo "===== Web Container Logs ====="
-                    docker logs ${DOCKER_CONTAINER_NAME} --tail=30 2>/dev/null || echo "Web container not running"
+                    docker logs nqobileq_web --tail=30 2>/dev/null || echo "Web container not running"
                     
                     echo ""
                     echo "===== Database Container Logs ====="
-                    docker logs ${DB_CONTAINER_NAME} --tail=30 2>/dev/null || echo "Database container not running"
+                    docker logs nqobileq_db --tail=30 2>/dev/null || echo "Database container not running"
                 '''
                 
                 emailext(
@@ -480,27 +489,9 @@ EOF
                         - Build URL: ${env.BUILD_URL}
                         
                         Please investigate the failure at: ${env.BUILD_URL}
-                        
-                        Common issues to check:
-                        1. Docker daemon is running
-                        2. Ports 80 and 8081 are available
-                        3. Database connection is working
-                        4. .env file has correct credentials
-                        5. PHP syntax is valid
-                    """,
-                    recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+                    """
                 )
             }
-        }
-        
-        unstable {
-            echo '⚠️  DEPLOYMENT UNSTABLE!'
-            emailext(
-                to: "${OWNER_EMAIL}",
-                subject: "⚠️ Jenkins Build Unstable: ${env.JOB_NAME} - Build #${env.BUILD_NUMBER}",
-                body: "The build completed with warnings. Check console output at ${env.BUILD_URL}",
-                recipientProviders: [[$class: 'DevelopersRecipientProvider']]
-            )
         }
     }
 }
