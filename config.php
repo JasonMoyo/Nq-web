@@ -8,12 +8,12 @@ if (getenv('APP_ENV') === 'development') {
     ini_set('display_errors', 0);
 }
 
-// Load environment variables from .env file
+// Load environment variables from .env file - DIRECT APPROACH
 $envFile = __DIR__ . '/.env';
+$env_vars = [];
 
 if (file_exists($envFile)) {
-    $dotenv = file_get_contents($envFile);
-    $lines = explode("\n", $dotenv);
+    $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     
     foreach ($lines as $line) {
         $line = trim($line);
@@ -26,35 +26,59 @@ if (file_exists($envFile)) {
             $key = trim($key);
             $value = trim($value);
             $value = trim($value, '"\'');
-            
-            putenv("$key=$value");
-            $_ENV[$key] = $value;
-            $_SERVER[$key] = $value;
+            $env_vars[$key] = $value;
         }
     }
 }
 
-// Database configuration
-define('DB_HOST', getenv('DB_HOST') ?: 'localhost');
-define('DB_USER', getenv('DB_USER') ?: 'root');
-define('DB_PASS', getenv('DB_PASSWORD') ?: '');
-define('DB_NAME', getenv('DB_NAME') ?: 'nqobileq_db');
+// Helper function to get env vars
+function get_env($key, $default = null) {
+    global $env_vars;
+    
+    // Check our loaded array first
+    if (isset($env_vars[$key])) {
+        return $env_vars[$key];
+    }
+    
+    // Fallback to getenv
+    $value = getenv($key);
+    if ($value !== false) {
+        return $value;
+    }
+    
+    // Fallback to $_ENV
+    if (isset($_ENV[$key])) {
+        return $_ENV[$key];
+    }
+    
+    return $default;
+}
 
-// Stripe Configuration (ADD THIS)
-define('STRIPE_PUBLISHABLE_KEY', getenv('STRIPE_PUBLISHABLE_KEY') ?: '');
-define('STRIPE_SECRET_KEY', getenv('STRIPE_SECRET_KEY') ?: '');
+// Database configuration
+define('DB_HOST', get_env('DB_HOST', 'localhost'));
+define('DB_USER', get_env('DB_USER', 'root'));
+define('DB_PASS', get_env('DB_PASSWORD', ''));
+define('DB_NAME', get_env('DB_NAME', 'nqobileq_db'));
+
+// Stripe Configuration
+define('STRIPE_PUBLISHABLE_KEY', get_env('STRIPE_PUBLISHABLE_KEY', ''));
+define('STRIPE_SECRET_KEY', get_env('STRIPE_SECRET_KEY', ''));
 
 // Owner contact information
-define('OWNER_PHONE', getenv('OWNER_PHONE') ?: '+27782280408');
-define('OWNER_EMAIL', getenv('OWNER_EMAIL') ?: 'thabani070801@gmail.com');
+define('OWNER_PHONE', get_env('OWNER_PHONE', '+27782280408'));
+define('OWNER_EMAIL', get_env('OWNER_EMAIL', 'thabani070801@gmail.com'));
 
 // Site URL
-define('SITE_URL', getenv('SITE_URL') ?: 'http://localhost');
+define('SITE_URL', get_env('SITE_URL', 'http://localhost'));
 
-// Initialize Stripe if keys are present (ADD THIS)
+// Initialize Stripe if keys are present
 if (STRIPE_SECRET_KEY && !empty(STRIPE_SECRET_KEY) && file_exists(__DIR__ . '/vendor/autoload.php')) {
-    require_once __DIR__ . '/vendor/autoload.php';
-    \Stripe\Stripe::setApiKey(STRIPE_SECRET_KEY);
+    try {
+        require_once __DIR__ . '/vendor/autoload.php';
+        \Stripe\Stripe::setApiKey(STRIPE_SECRET_KEY);
+    } catch (Exception $e) {
+        error_log("Stripe initialization failed: " . $e->getMessage());
+    }
 }
 
 // Create connection
