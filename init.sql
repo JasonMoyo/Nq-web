@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Service bookings table
+-- Service bookings table (ADDED payment columns)
 CREATE TABLE IF NOT EXISTS service_bookings (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS service_bookings (
     preferred_date DATE NULL,
     message TEXT,
     status VARCHAR(20) DEFAULT 'pending',
+    payment_status VARCHAR(20) DEFAULT 'pending',      -- NEW: paid, pending, failed
+    payment_intent_id VARCHAR(100),                    -- NEW: Stripe payment ID
+    amount_paid DECIMAL(10,2),                         -- NEW: Amount paid in USD
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

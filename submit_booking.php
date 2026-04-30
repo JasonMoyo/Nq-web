@@ -28,6 +28,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     if ($stmt->execute()) {
 
+        // Get the newly created booking ID
+        $booking_id = $conn->insert_id;
+
         // Send email notification
         try {
             $mail = new PHPMailer(true);
@@ -80,13 +83,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             error_log("Mailer Error: {$mail->ErrorInfo}");
         }
 
-        // Redirect to confirmation page with booking details
-        header("Location: booking-confirmation.php?name=" . urlencode($name) . 
-               "&email=" . urlencode($email) . 
-               "&phone=" . urlencode($phone) . 
-               "&service=" . urlencode($service) . 
-               "&date=" . urlencode($preferred_date) . 
-               "&message=" . urlencode($message));
+        // ============ REDIRECT TO STRIPE PAYMENT ============
+        // Amount in cents: $5.00 USD = 500 cents
+        // You can change this amount based on service type
+        $amount_cents = 500; // $5.00 USD
+        
+        // Redirect to Stripe checkout page
+        header("Location: stripe-checkout.php?booking_id=" . $booking_id . "&amount=" . $amount_cents . "&service=" . urlencode($service));
         exit;
 
     } else {
