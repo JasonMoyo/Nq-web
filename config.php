@@ -31,7 +31,7 @@ if (file_exists($envFile)) {
     }
 }
 
-// Helper function to get env vars
+// Helper function to get env vars - MOVED BEFORE constants
 function get_env($key, $default = null) {
     global $env_vars;
     
@@ -42,12 +42,12 @@ function get_env($key, $default = null) {
     
     // Fallback to getenv
     $value = getenv($key);
-    if ($value !== false) {
+    if ($value !== false && $value !== null) {
         return $value;
     }
     
     // Fallback to $_ENV
-    if (isset($_ENV[$key])) {
+    if (isset($_ENV[$key]) && $_ENV[$key] !== null) {
         return $_ENV[$key];
     }
     
@@ -72,7 +72,7 @@ define('OWNER_EMAIL', get_env('OWNER_EMAIL', 'thabani070801@gmail.com'));
 define('SITE_URL', get_env('SITE_URL', 'http://localhost'));
 
 // Initialize Stripe if keys are present
-if (STRIPE_SECRET_KEY && !empty(STRIPE_SECRET_KEY) && file_exists(__DIR__ . '/vendor/autoload.php')) {
+if (defined('STRIPE_SECRET_KEY') && STRIPE_SECRET_KEY && !empty(STRIPE_SECRET_KEY) && file_exists(__DIR__ . '/vendor/autoload.php')) {
     try {
         require_once __DIR__ . '/vendor/autoload.php';
         \Stripe\Stripe::setApiKey(STRIPE_SECRET_KEY);
